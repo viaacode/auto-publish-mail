@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:json="http://www.mulesoft.org/schema/mule/json" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw" xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking" xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans" 
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+http://www.mulesoft.org/schema/mule/ee/tracking http://www.mulesoft.org/schema/mule/ee/tracking/current/mule-tracking-ee.xsd
+http://www.mulesoft.org/schema/mule/ee/dw http://www.mulesoft.org/schema/mule/ee/dw/current/dw.xsd
+http://www.mulesoft.org/schema/mule/json http://www.mulesoft.org/schema/mule/json/current/mule-json.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
+    <flow name="batchCreatorFlow" initialState="started">
+        <poll doc:name="Poll">
+            <fixed-frequency-scheduler frequency="30" timeUnit="DAYS"/>
+            <logger message="Starting..." level="INFO" doc:name="Logger"/>
+        </poll>
+        <set-variable variableName="currentTime" value="#[server.dateTime]" doc:name="Set currentTime"/>
+        <db:select config-ref="Mediahaven_DB" doc:name="Get all organisations">
+            <db:parameterized-query><![CDATA[SELECT DISTINCT(organisation) FROM sips;]]></db:parameterized-query>
+        </db:select>
+        <set-variable variableName="endquery" value="(now() - interval '1' month)" doc:name="Set endquery"/>
+        <set-variable variableName="nrOfOrganisations" value="#[payload.size()]" doc:name="Set nrOfOrganisations"/>
+        <foreach doc:name="For Each organisation">
+            <set-variable variableName="organisation" value="#[payload.organisation]" doc:name="Set organisation"/>
+            <enricher target="#[flowVars.query]" doc:name="Set query">
+                <set-payload value="SELECT fragment_id, external_id, title, organisation, archive_date, #[flowVars.enddate] as end_date FROM sips WHERE organisation = '#[flowVars.organisation]' AND archive_date &gt;= '#[flowVars.startdate]' AND archive_date &lt; '#[flowVars.enddate]' AND archive_status IN('on_tape', 'on_disk') ORDER BY archive_date ASC;" doc:name="Set Payload"/>
+            </enricher>
+            <enricher target="#[flowVars.countQuery]" doc:name="Set countQuery">
+                <set-payload value="SELECT COUNT(*) as total FROM sips WHERE organisation = '#[flowVars.organisation]' AND archive_date &gt;= '#[flowVars.startdate]' AND archive_date &lt; '#[flowVars.enddate]' AND archive_status IN('on_tape', 'on_disk');" doc:name="Set Payload"/>
+            </enricher>
+            <scatter-gather doc:name="Scatter-Gather">
+                <threading-profile poolExhaustedAction="RUN"/>
+                <flow-ref name="get_previous_month" doc:name="get_previous_month"/>
+                <flow-ref name="get_not_published_in_warranty" doc:name="get_not_published_in_warranty"/>
+                <flow-ref name="get_total" doc:name="get_total"/>
+                <flow-ref name="get_total_until_last_month" doc:name="get_total_until_last_month"/>
+                <flow-ref name="get_not_published_about_to_expire" doc:name="get_not_published_about_to_expire"/>
+            </scatter-gather>
+            <enricher source="#[payload]" target="#[flowVars.result]" doc:name="Message Enricher">
+                <dw:transform-message doc:name="Transform Message">
+                    <dw:input-payload doc:sample="sample_data/MyPojo.dwl"/>
+                    <dw:set-payload><![CDATA[%dw 1.0
+%output application/java
+%input payload application/java
+---
+{
+	(payload map
+		($ mapObject 
+			'$$': $
+		)
+	)
+}]]></dw:set-payload>
+                </dw:transform-message>
+            </enricher>
+            <set-variable variableName="totalIncrease" value="#[flowVars.result.total == 0 || flowVars.result.totalUntilLastMonth == 0 ? 0.0 : ((flowVars.result.total / flowVars.result.totalUntilLastMonth) - 1) * 100]" doc:name="Set totalIncrease"/>
+            <set-payload value="#[&quot;\n\n&quot; + flowVars.organisation + &quot;:\n\n&quot;]Uw archief bevat momenteel: #[flowVars.result.total] items (stijging van #[java.lang.String.format(&quot;%.2f&quot;, flowVars.totalIncrease) + &quot;%)\n&quot;]
+    Aantal items gearchiveerd in de voorbije maand: #[flowVars.result.previousMonth + &quot;\n&quot;]
+    Niet gepubliceerde items binnen garantieperiode: #[flowVars.result.notPublishedInWarranty + &quot;\n&quot;]
+    Van #[flowVars.result.notPublishedAboutToExpire] niet gepubliceerde items vervalt de garantieperiode deze maand#[&quot;\n&quot;]" doc:name="Set Payload"/>
+            <logger message="#[payload]" level="INFO" doc:name="Logger"/>
+        </foreach>
+    </flow>
+    <sub-flow name="get_total">
+        <set-variable variableName="startDate" value="#[&quot;1985:01&quot;]" doc:name="Set startDate"/>
+        <set-variable variableName="endDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).format(&quot;yyyy:MM&quot;)]" doc:name="Set endDate"/>
+        <http:request config-ref="HTTP_Request_Configuration" path="/media/" method="GET" doc:name="Get all from previous month">
+            <http:request-builder>
+                <http:query-param paramName="q" value="+((MediaObjectArchiveStatus:on_tape OR MediaObjectArchiveStatus:on_disk) AND MediaObjectArchiveDate:[&quot;#[flowVars.startDate]&quot; TO &quot;#[flowVars.endDate]&quot;] AND MediaObjectOwnerName:#[flowVars.organisation] AND (MediaObjectType:video OR MediaObjectType:audio OR MediaObjectType:image) AND MediaObjectFragmentisiningestspace:*)"/>
+                <http:query-param paramName="nrOfResults" value="1"/>
+                <http:header headerName="Authorization" value="${mediahaven.authstring}"/>
+            </http:request-builder>
+        </http:request>
+        <dw:transform-message doc:name="Transform Message">
+            <dw:set-payload><![CDATA[%dw 1.0
+%output application/java
+---
+total: payload.totalNrOfResults]]></dw:set-payload>
+        </dw:transform-message>
+    </sub-flow>
+    <sub-flow name="get_total_until_last_month">
+        <set-variable variableName="startDate" value="#[&quot;1985:01&quot;]" doc:name="Set startDate"/>
+        <set-variable variableName="endDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).plusMonths(-1).format(&quot;yyyy:MM&quot;)]" doc:name="Set endDate"/>
+        <http:request config-ref="HTTP_Request_Configuration" path="/media/" method="GET" doc:name="Get all from previous month">
+            <http:request-builder>
+                <http:query-param paramName="q" value="+((MediaObjectArchiveStatus:on_tape OR MediaObjectArchiveStatus:on_disk) AND MediaObjectArchiveDate:[&quot;#[flowVars.startDate]&quot; TO &quot;#[flowVars.endDate]&quot;] AND MediaObjectOwnerName:#[flowVars.organisation] AND (MediaObjectType:video OR MediaObjectType:audio OR MediaObjectType:image) AND MediaObjectFragmentisiningestspace:*)"/>
+                <http:query-param paramName="nrOfResults" value="1"/>
+                <http:header headerName="Authorization" value="${mediahaven.authstring}"/>
+            </http:request-builder>
+        </http:request>
+        <dw:transform-message doc:name="Transform Message">
+            <dw:set-payload><![CDATA[%dw 1.0
+%output application/java
+---
+totalUntilLastMonth: payload.totalNrOfResults]]></dw:set-payload>
+        </dw:transform-message>
+    </sub-flow>
+    <sub-flow name="get_previous_month">
+        <set-variable variableName="startDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).plusMonths(-1).format(&quot;yyyy:MM&quot;)]" doc:name="Set startDate"/>
+        <set-variable variableName="endDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).format(&quot;yyyy:MM&quot;)]" doc:name="Set endDate"/>
+        <http:request config-ref="HTTP_Request_Configuration" path="/media/" method="GET" doc:name="Get all from previous month">
+            <http:request-builder>
+                <http:query-param paramName="q" value="+((MediaObjectArchiveStatus:on_tape OR MediaObjectArchiveStatus:on_disk) AND MediaObjectArchiveDate:[&quot;#[flowVars.startDate]&quot; TO &quot;#[flowVars.endDate]&quot;] AND MediaObjectOwnerName:#[flowVars.organisation] AND (MediaObjectType:video OR MediaObjectType:audio OR MediaObjectType:image) AND MediaObjectFragmentisiningestspace:*)"/>
+                <http:query-param paramName="nrOfResults" value="1"/>
+                <http:header headerName="Authorization" value="${mediahaven.authstring}"/>
+            </http:request-builder>
+        </http:request>
+        <dw:transform-message doc:name="Transform Message">
+            <dw:set-payload><![CDATA[%dw 1.0
+%output application/java
+---
+previousMonth: payload.totalNrOfResults]]></dw:set-payload>
+        </dw:transform-message>
+    </sub-flow>
+    <sub-flow name="get_not_published_in_warranty">
+        <set-variable variableName="startDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).plusMonths(-6).format(&quot;yyyy:MM&quot;)]" doc:name="Set startDate"/>
+        <set-variable variableName="endDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).format(&quot;yyyy:MM&quot;)]" doc:name="Set endDate"/>
+        <http:request config-ref="HTTP_Request_Configuration" path="/media/" method="GET" doc:name="Get all from previous month">
+            <http:request-builder>
+                <http:query-param paramName="q" value="+((MediaObjectArchiveStatus:on_tape OR MediaObjectArchiveStatus:on_disk) AND MediaObjectArchiveDate:[&quot;#[flowVars.startDate]&quot; TO &quot;#[flowVars.endDate]&quot;] AND MediaObjectOwnerName:#[flowVars.organisation] AND (MediaObjectType:video OR MediaObjectType:audio OR MediaObjectType:image) AND MediaObjectFragmentisiningestspace:0)"/>
+                <http:query-param paramName="nrOfResults" value="1"/>
+                <http:header headerName="Authorization" value="${mediahaven.authstring}"/>
+            </http:request-builder>
+        </http:request>
+        <dw:transform-message doc:name="Transform Message">
+            <dw:set-payload><![CDATA[%dw 1.0
+%output application/java
+---
+notPublishedInWarranty: payload.totalNrOfResults]]></dw:set-payload>
+        </dw:transform-message>
+    </sub-flow>
+   <sub-flow name="get_not_published_about_to_expire">
+        <set-variable variableName="startDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).plusMonths(-5).format(&quot;yyyy:MM&quot;)]" doc:name="Set startDate"/>
+        <set-variable variableName="endDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).plusMonths(-4).format(&quot;yyyy:MM&quot;)]" doc:name="Set endDate"/>
+        <http:request config-ref="HTTP_Request_Configuration" path="/media/" method="GET" doc:name="Get all from previous month">
+            <http:request-builder>
+                <http:query-param paramName="q" value="+((MediaObjectArchiveStatus:on_tape OR MediaObjectArchiveStatus:on_disk) AND MediaObjectArchiveDate:[&quot;#[flowVars.startDate]&quot; TO &quot;#[flowVars.endDate]&quot;] AND MediaObjectOwnerName:#[flowVars.organisation] AND (MediaObjectType:video OR MediaObjectType:audio OR MediaObjectType:image) AND MediaObjectFragmentisiningestspace:0)"/>
+                <http:query-param paramName="nrOfResults" value="1"/>
+                <http:header headerName="Authorization" value="${mediahaven.authstring}"/>
+            </http:request-builder>
+        </http:request>
+        <dw:transform-message doc:name="Transform Message">
+            <dw:set-payload><![CDATA[%dw 1.0
+%output application/java
+---
+notPublishedAboutToExpire: payload.totalNrOfResults]]></dw:set-payload>
+        </dw:transform-message>
+    </sub-flow>
+</mule>
