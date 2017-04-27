@@ -13,6 +13,7 @@ http://www.springframework.org/schema/context http://www.springframework.org/sch
 http://www.mulesoft.org/schema/mule/amqp http://www.mulesoft.org/schema/mule/amqp/current/mule-amqp.xsd">
  	<context:property-placeholder location="${mule.env}.properties"/>
  	
- 	    <http:request-config name="HTTP_Request_Configuration" host="${mediahaven.host}" port="${mediahaven.port}" basePath="${mediahaven.basepath}" doc:name="HTTP Request Configuration" protocol="HTTPS"/>
+ 	<http:request-config name="Mediahaven_Rest_API" host="${mediahaven.host}" port="${mediahaven.port}" basePath="${mediahaven.basepath}" doc:name="HTTP Request Configuration" protocol="HTTPS"/>
  	<db:generic-config name="Mediahaven_DB" url="${db.url}" driverClassName="org.postgresql.Driver" doc:name="Generic Database Configuration"/>
+ 	<db:mysql-config name="MySQL_Configuration" host="${ams.host}" port="3306" user="${ams.username}" password="${ams.password}" database="${ams.database}" doc:name="MySQL Configuration"/>
 </mule>
