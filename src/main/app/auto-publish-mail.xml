@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<mule xmlns:metadata="http://www.mulesoft.org/schema/mule/metadata" xmlns:json="http://www.mulesoft.org/schema/mule/json" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw" xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking" xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+<mule xmlns:ldap="http://www.mulesoft.org/schema/mule/ldap" xmlns:metadata="http://www.mulesoft.org/schema/mule/metadata" xmlns:json="http://www.mulesoft.org/schema/mule/json" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw" xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking" xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
 	xmlns:spring="http://www.springframework.org/schema/beans" 
 	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
 	xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
@@ -9,20 +9,62 @@ http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/cu
 http://www.mulesoft.org/schema/mule/ee/tracking http://www.mulesoft.org/schema/mule/ee/tracking/current/mule-tracking-ee.xsd
 http://www.mulesoft.org/schema/mule/ee/dw http://www.mulesoft.org/schema/mule/ee/dw/current/dw.xsd
 http://www.mulesoft.org/schema/mule/json http://www.mulesoft.org/schema/mule/json/current/mule-json.xsd
-http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/ldap http://www.mulesoft.org/schema/mule/ldap/current/mule-ldap.xsd">
     <flow name="batchCreatorFlow" initialState="started">
         <poll doc:name="Poll">
             <fixed-frequency-scheduler frequency="30" timeUnit="DAYS"/>
-            <logger message="Starting..." level="INFO" doc:name="Logger"/>
+            <logger message="Starting..." level="WARN" doc:name="Logger"/>
         </poll>
         <set-variable variableName="currentTime" value="#[server.dateTime]" doc:name="Set currentTime"/>
         <db:select config-ref="Mediahaven_DB" doc:name="Get all organisations">
-            <db:parameterized-query><![CDATA[SELECT DISTINCT(organisation) FROM sips WHERE organisation NOT IN('failures', 'plantentuinmeise');]]></db:parameterized-query>
+            <db:parameterized-query><![CDATA[SELECT DISTINCT(organisation)
+FROM sips
+WHERE organisation NOT IN('failures', 'plantentuinmeise');]]></db:parameterized-query>
         </db:select>
         <set-variable variableName="endquery" value="(now() - interval '1' month)" doc:name="Set endquery"/>
         <set-variable variableName="nrOfOrganisations" value="#[payload.size()]" doc:name="Set nrOfOrganisations"/>
         <foreach doc:name="For Each organisation">
-            <set-variable variableName="organisation" value="#[payload.organisation]" doc:name="Set organisation"/>
+            <flow-ref name="processOrganisation" doc:name="processOrganisation"/>
+            <choice doc:name="Choice">
+                <when expression="#[flowVars.result.notPublishedInWarranty == 0]">
+                    <logger message="Not sending any email for #[flowVars.prettyOrganisationName]" level="WARN" doc:name="Logger"/>
+                </when>
+                <otherwise>
+                    <expression-component doc:name="Expression"><![CDATA[// Do nothing]]></expression-component>
+                </otherwise>
+            </choice>
+            <expression-filter expression="#[flowVars.result.notPublishedInWarranty &gt; 0]" doc:name="Expression"/>
+            <enricher target="#[flowVars.users]" doc:name="Message Enricher">
+                <flow-ref name="getUsersFromLdapByOrganisationSubFlow" doc:name="getUsersFromLdapByOrganisationSubFlow"/>
+            </enricher>
+            <expression-component doc:name="Expression"><![CDATA[//Map map1 = new java.util.HashMap();
+//map1.put("login", "dieter.vanhoof@bewire.be");
+//ArrayList list = new java.util.ArrayList();
+
+//list.add(map1);
+
+//flowVars.users = list;]]></expression-component>
+            <enricher doc:name="Message Enricher" target="#[flowVars.users]">
+                <flow-ref name="filterEmailsFlow" doc:name="filterEmailsFlow"/>
+            </enricher>
+            <flow-ref name="sendEmailsFlow" doc:name="sendEmailsFlow"/>
+            
+        </foreach>
+    </flow>
+    <sub-flow name="processOrganisation">
+        <set-variable variableName="organisation" value="#[payload.organisation]" doc:name="Set organisation"/>
+        <db:select config-ref="MAM_Snapshot" doc:name="Database">
+            <db:parameterized-query><![CDATA[SELECT external_id FROM organisations WHERE name = #[flowVars.organisation];]]></db:parameterized-query>
+        </db:select>
+        <set-variable variableName="or_id" value="#[payload[0].external_id]" doc:name="Set or_id"/>
+        <enricher source="#[payload.description]" target="#[flowVars.prettyOrganisationName]" doc:name="Set prettyOrganisationName">
+            <ldap:search-one config-ref="LDAP_Configuration" baseDn="ou=apps,ou=users,dc=prd,dc=viaa,dc=be" filter="(&amp;(objectClass=organization)(o=#[flowVars.or_id]))" doc:name="LDAP">
+                <ldap:attributes>
+                    <ldap:attribute>description</ldap:attribute>
+                </ldap:attributes>
+            </ldap:search-one>
+        </enricher>
             <enricher target="#[flowVars.query]" doc:name="Set query">
                 <set-payload value="SELECT fragment_id, external_id, title, organisation, archive_date, #[flowVars.enddate] as end_date FROM sips WHERE organisation = '#[flowVars.organisation]' AND archive_date &gt;= '#[flowVars.startdate]' AND archive_date &lt; '#[flowVars.enddate]' AND archive_status IN('on_tape', 'on_disk') ORDER BY archive_date ASC;" doc:name="Set Payload"/>
             </enricher>
@@ -30,10 +72,9 @@ http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/htt
                 <set-payload value="SELECT COUNT(*) as total FROM sips WHERE organisation = '#[flowVars.organisation]' AND archive_date &gt;= '#[flowVars.startdate]' AND archive_date &lt; '#[flowVars.enddate]' AND archive_status IN('on_tape', 'on_disk');" doc:name="Set Payload"/>
             </enricher>
             <scatter-gather doc:name="Scatter-Gather">
-                <threading-profile poolExhaustedAction="RUN"/>
                 <flow-ref name="get_previous_month" doc:name="get_previous_month"/>
                 <flow-ref name="get_not_published_in_warranty" doc:name="get_not_published_in_warranty"/>
-                <flow-ref name="get_total" doc:name="get_total"/>
+                <flow-ref name="get_total_mam_items" doc:name="get_total_mam_items"/>
                 <flow-ref name="get_total_until_last_month" doc:name="get_total_until_last_month"/>
                 <flow-ref name="get_not_published_about_to_expire" doc:name="get_not_published_about_to_expire"/>
                 <flow-ref name="get_total_registered_items" doc:name="get_total_registered_items"/>
@@ -55,8 +96,10 @@ http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/htt
 }]]></dw:set-payload>
                 </dw:transform-message>
             </enricher>
-            <set-variable variableName="totalMamIncrease" value="#[flowVars.result.total == 0 || flowVars.result.totalUntilLastMonth == 0 ? 0.0 : ((flowVars.result.total / flowVars.result.totalUntilLastMonth) - 1) * 100]" doc:name="Set totalMamIncrease"/>
-            <set-variable variableName="totalAMSIncrease" value="#[flowVars.result.totalRegistered == 0 || flowVars.result.registeredUntilLastMonth == 0 ? 0.0 : ((flowVars.result.totalRegistered / flowVars.result.registeredUntilLastMonth) - 1) * 100]" doc:name="Set totalAMSIncrease"/>
+            <set-variable variableName="totalMamIncrease" value="#[flowVars.result.total == 0 || flowVars.result.totalUntilLastMonth == 0 ? 0.0 : Math.round(((flowVars.result.total / flowVars.result.totalUntilLastMonth) - 1) * 10000.0) / 100.0]" doc:name="Set totalMamIncrease"/>
+            <set-variable variableName="totalAMSIncrease" value="#[flowVars.result.totalRegistered == 0 || flowVars.result.registeredUntilLastMonth == 0 ? 0.0 : Math.round(((flowVars.result.totalRegistered / flowVars.result.registeredUntilLastMonth) - 1) * 10000.0) / 100.0]" doc:name="Set totalAMSIncrease"/>
+        <set-variable variableName="currentMonth" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).format(&quot;MM/yyyy&quot;)]" doc:name="Set currentMonth"/>
+        <enricher target="#[flowVars.emailData]" doc:name="Message Enricher">
             <dw:transform-message doc:name="Transform Message" metadata:id="640a5579-ac2e-473a-8917-0a0c355c81dd">
                 <dw:input-variable doc:sample="sample_data/string.dwl" mimeType="application/java" variableName="organisation"/>
                 <dw:input-variable variableName="flowVars.result.totalRegistered"/>
@@ -69,19 +112,97 @@ http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/htt
 	(' (' ++ ('stijging' when data >= 0 otherwise 'daling') ++ ' van ' ++ toCorrectFormatWithDecimal(data) ++ '% t.o.v. vorige maand)') when data != 0 otherwise ' (geen stijging t.o.v. vorige maand)'
 )
 ---
-'\n\n-----|   ' ++ flowVars.organisation ++ '   |-----\n\n' ++
-	'Aantal items geregistreerd: ' ++ toCorrectFormat(flowVars.result.totalRegistered) ++
-		parseIncrease(flowVars.totalAMSIncrease) ++ '\n' ++
-	'Uw archief bevat momenteel: ' ++ toCorrectFormat(flowVars.result.total) ++ ' items' ++
-		parseIncrease(flowVars.totalMamIncrease) ++ '\n' ++
-	'Aantal items gearchiveerd in de voorbije maand: ' ++ toCorrectFormat(flowVars.result.previousMonth) ++ '\n' ++
-	'Niet gepubliceerde items binnen garantieperiode: ' ++ toCorrectFormat(flowVars.result.notPublishedInWarranty) ++ '\n' ++
-	'Van ' ++ toCorrectFormat(flowVars.result.notPublishedAboutToExpire) ++ ' niet gepubliceerde items vervalt de garantieperiode deze maand']]></dw:set-payload>
+{
+	"currentMonth": flowVars.currentMonth,
+	"cp_name": flowVars.prettyOrganisationName,
+	"registered": 'Aantal items geregistreerd: ' ++ toCorrectFormat(flowVars.result.totalRegistered) ++
+			parseIncrease(flowVars.totalAMSIncrease),
+	"archived": 'Uw archief bevat momenteel: ' ++ toCorrectFormat(flowVars.result.total) ++ ' items' ++
+			parseIncrease(flowVars.totalMamIncrease),
+	"prevmonth": 'Aantal items gearchiveerd in de voorbije maand: ' ++ toCorrectFormat(flowVars.result.previousMonth),
+	"not_published": 'Niet gepubliceerde items binnen garantieperiode: ' ++ toCorrectFormat(flowVars.result.notPublishedInWarranty),
+	"expiring": 'Van ' ++ toCorrectFormat(flowVars.result.notPublishedAboutToExpire) ++ ' niet gepubliceerde items vervalt de garantieperiode deze maand'
+}]]></dw:set-payload>
             </dw:transform-message>
-            <logger message="#[payload]" level="WARN" doc:name="Logger"/>
+        </enricher>
+            <logger message="#[&quot;\n\n&quot;]=================  #[flowVars.emailData.cp_name]  =================#[&quot;\n&quot; + flowVars.emailData.registered + &quot;\n&quot; + flowVars.emailData.archived + &quot;\n&quot; + flowVars.emailData.prevmonth + &quot;\n&quot; + flowVars.emailData.not_published + &quot;\n&quot; + flowVars.emailData.expiring]" level="WARN" doc:name="Logger"/>
+    </sub-flow>
+    <sub-flow name="retrieveEmailsFlow">
+    	<http:request config-ref="MAM_API" path="/monitoring/login.php" method="GET" doc:name="Get login page for csrf-nonce"/>
+        <byte-array-to-string-transformer doc:name="Byte Array to String"/>
+        <set-variable variableName="csrf-nonce" value="#[org.mule.util.StringUtils.substringAfter(payload, 'name=&quot;monitoring-csrf-nonce&quot; value=&quot;').substring(0,40)]" doc:name="Fetch csrf-nonce"/>
+        <set-variable variableName="cookie" value="#[message.inboundProperties['Set-Cookie'][0]]" doc:name="Set cookie"/>
+        <set-variable variableName="mam_username" value="${mam.username}" doc:name="Set mam_username"/>
+        <set-variable variableName="mam_password" value="${mam.password}" doc:name="Set mam_password"/>
+        <set-payload value="#[&quot;&quot;]" mimeType="text/plain" doc:name="Set Payload empty"/>
+        <set-attachment attachmentName="#['username']" value="#[flowVars.mam_username]" contentType="text/plain" doc:name="Set username"/>
+        <set-attachment attachmentName="#['password']" value="#[flowVars.mam_password]" contentType="text/plain" doc:name="Set password"/>
+        <set-attachment attachmentName="#['monitoring-csrf-nonce']" value="#[flowVars.'csrf-nonce']" contentType="text/plain" doc:name="Set token"/>
+        <logger message="Trying to log in" level="INFO" doc:name="Trying to log in"/>
+        <http:request config-ref="MAM_API" path="/monitoring/login.php" method="POST" doc:name="Post login page to log in">
+            <http:request-builder>
+                <http:header headerName="Cookie" value="#[flowVars.cookie]"/>
+                <http:header headerName="Content-Type" value="multipart/form-data"/>
+            </http:request-builder>
+        </http:request>
+        <logger message="Logged in" level="INFO" doc:name="Logged in"/>
+        <set-payload value="#[&quot;&quot;]" doc:name="Set Payload empty"/>
+        <http:request config-ref="MAM_API" path="/monitoring/json.php?config=default&amp;service=MediaHaven&amp;view=Users&amp;fields[0]=name&amp;order=0&amp;direction=down&amp;cumulative=1&amp;granularity=month&amp;priority=0&amp;results=50&amp;limit=100&amp;filter=" method="GET" doc:name="Get emails for organisation">
+            <http:request-builder>
+                <http:query-param paramName="values[0]" value="#[flowVars.organisation]"/>
+                <http:header headerName="Cookie" value="#[flowVars.cookie]"/>
+            </http:request-builder>
+        </http:request>
+    </sub-flow>
+    <sub-flow name="getUsersFromLdapByOrganisationSubFlow">
+        <ldap:search config-ref="LDAP_Configuration" baseDn="ou=apps,ou=users,dc=prd,dc=viaa,dc=be" filter="(&amp;(objectclass=inetOrgPerson)(o=#[flowVars.or_id]))" scope="SUB_TREE" structuralObjectClass="inetOrgPerson" doc:name="LDAP">
+	        <ldap:attributes>
+	            <ldap:attribute>mail</ldap:attribute>
+	            <ldap:attribute>givenName</ldap:attribute>
+	        </ldap:attributes>
+        </ldap:search>
+    </sub-flow>
+    <sub-flow name="filterEmailsFlow">
+        <dw:transform-message doc:name="Transform Message">
+            <dw:input-payload doc:sample="sample_data/json.json"/>
+            <dw:set-payload><![CDATA[%dw 1.0
+%output application/java
+---
+flowVars.users filter (
+	// Regex originates from http://emailregex.com. Should cover 99.9% of cases
+	(not ($.mail contains '@viaa.be')) and 
+	($.mail matches /^(([^<>()\[\]\\.,;:\s@"]+(\.[^<>()\[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/)
+)]]></dw:set-payload>
+        </dw:transform-message>
+    </sub-flow>
+    <sub-flow name="sendEmailsFlow">
+        <foreach collection="#[flowVars.users]" doc:name="For Each">
+            <logger message="Sending email to #[payload.givenName] (#[payload.mail])" level="WARN" doc:name="Logger"/>
+            <dw:transform-message doc:name="Transform Message">
+                <dw:set-payload><![CDATA[%dw 1.0
+%output application/json
+---
+{
+    "To": [payload.email],
+    "Data": {
+        "currentMonth": flowVars.emailData.currentMonth,
+        "x-apple-data-detectors": "x-apple-data-detectorsTestValue",
+        "owa": "owaTestValue",
+        "cp_name": flowVars.emailData.cp_name,
+        "registered": flowVars.emailData.registered,
+        "archived": flowVars.emailData.archived,
+        "prevmonth": flowVars.emailData.prevmonth,
+        "not_published": flowVars.emailData.not_published,
+        "expiring": flowVars.emailData.expiring
+    }
+}]]></dw:set-payload>
+            </dw:transform-message>
+            <!-- 
+            <http:request config-ref="GlueConfiguration" path="/efea1807-e31a-417e-9ec4-1b63a8e5d3cb/send" method="POST" doc:name="HTTP"/>
+        	-->
         </foreach>
-    </flow>
-    <sub-flow name="get_total">
+    </sub-flow>
+    <sub-flow name="get_total_mam_items">
         <set-variable variableName="startDate" value="#[&quot;1985:01&quot;]" doc:name="Set startDate"/>
         <set-variable variableName="endDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).format(&quot;yyyy:MM&quot;)]" doc:name="Set endDate"/>
         <http:request config-ref="Mediahaven_Rest_API" path="/media/" method="GET" doc:name="Get all from previous month">
@@ -167,10 +288,12 @@ notPublishedAboutToExpire: payload.totalNrOfResults]]></dw:set-payload>
         </dw:transform-message>
     </sub-flow>
     <sub-flow name="get_total_registered_items">
+        <set-variable variableName="endDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).format(&quot;yyyy-MM-01&quot;)]" doc:name="Set endDate"/>
         <db:select config-ref="MySQL_Configuration" doc:name="Get total registered items in AMS">
             <db:parameterized-query><![CDATA[SELECT COUNT(*) as total FROM carrier
 LEFT JOIN organizations org ON organization_id = org.id
-WHERE replace(replace(replace(replace(lower(org.name), ' ', ''), '.', ''), ',', ''), '-', '') = #[flowVars.organisation];]]></db:parameterized-query>
+WHERE noid_id = #[flowVars.or_id]
+AND created_on < #[flowVars.endDate];]]></db:parameterized-query>
         </db:select>
         <dw:transform-message doc:name="Transform Message">
             <dw:set-payload><![CDATA[%dw 1.0
@@ -184,8 +307,8 @@ totalRegistered: payload[0].total]]></dw:set-payload>
         <db:select config-ref="MySQL_Configuration" doc:name="Get total registered items during the last month in AMS">
             <db:parameterized-query><![CDATA[SELECT COUNT(*) as total FROM carrier
 LEFT JOIN organizations org ON organization_id = org.id
-WHERE replace(replace(replace(replace(lower(org.name), ' ', ''), '.', ''), ',', ''), '-', '') = #[flowVars.organisation]
-AND created_at < #[];]]></db:parameterized-query>
+WHERE noid_id = #[flowVars.or_id]
+AND created_on < #[flowVars.endDate];]]></db:parameterized-query>
         </db:select>
         <dw:transform-message doc:name="Transform Message">
             <dw:set-payload><![CDATA[%dw 1.0

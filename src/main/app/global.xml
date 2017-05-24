@@ -1,11 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<mule xmlns:http="http://www.mulesoft.org/schema/mule/http"
+<mule xmlns:ldap="http://www.mulesoft.org/schema/mule/ldap"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http"
 	xmlns:amqp="http://www.mulesoft.org/schema/mule/amqp" xmlns:context="http://www.springframework.org/schema/context" xmlns:db="http://www.mulesoft.org/schema/mule/db"
 	xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
 	xmlns:spring="http://www.springframework.org/schema/beans" 
 	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-	xsi:schemaLocation="http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+	xsi:schemaLocation="http://www.mulesoft.org/schema/mule/ldap http://www.mulesoft.org/schema/mule/ldap/current/mule-ldap.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
 http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
 http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
 http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
@@ -15,5 +17,24 @@ http://www.mulesoft.org/schema/mule/amqp http://www.mulesoft.org/schema/mule/amq
  	
  	<http:request-config name="Mediahaven_Rest_API" host="${mediahaven.host}" port="${mediahaven.port}" basePath="${mediahaven.basepath}" doc:name="HTTP Request Configuration" protocol="HTTPS"/>
  	<db:generic-config name="Mediahaven_DB" url="${db.url}" driverClassName="org.postgresql.Driver" doc:name="Generic Database Configuration"/>
+ 	<db:generic-config name="MAM_Snapshot" url="${mamsnapshot.url}" driverClassName="org.postgresql.Driver" doc:name="Generic Database Configuration"/>
  	<db:mysql-config name="MySQL_Configuration" host="${ams.host}" port="3306" user="${ams.username}" password="${ams.password}" database="${ams.database}" doc:name="MySQL Configuration"/>
+    <http:request-config name="MAM_API" host="${mam.host}" port="${mam.port}" basePath="/" responseTimeout="30000" doc:name="HTTP Request Configuration" protocol="HTTPS" />
+    <http:request-config name="GlueConfiguration" protocol="HTTPS" host="${glue.host}" port="${glue.port}" basePath="${glue.basepath}" doc:name="HTTP Request Configuration">
+        <http:basic-authentication username="${glue.username}" password="${glue.password}" preemptive="true"/>
+    </http:request-config>
+    
+    <ldap:config
+    	name="LDAP_Configuration"
+    	authDn="${ldap.authdn}"
+    	authPassword="${ldap.authpassword}"
+    	authentication="simple"
+    	url="${ldap.url}"
+    	doc:name="LDAP: TLS Configuration"
+    	schemaEnabled="true"
+    	referral="FOLLOW">
+	        <ldap:extended-configuration>
+	            <ldap:extended-configuration key="java.naming.ldap.factory.socket">org.mule.module.ldap.security.BypassTrustSSLSocketFactory</ldap:extended-configuration>
+	        </ldap:extended-configuration>
+    	</ldap:config>
 </mule>
