@@ -17,7 +17,10 @@ http://www.mulesoft.org/schema/mule/ldap http://www.mulesoft.org/schema/mule/lda
             <logger message="Starting..." level="WARN" doc:name="Logger"/>
         </poll>
         <set-variable variableName="currentTime" value="#[server.dateTime]" doc:name="Set currentTime"/>
-        <db:select config-ref="Mediahaven_DB" doc:name="Get all organisations">
+        <!-- 
+        <set-variable variableName="currentTime" value="#[new org.mule.el.datetime.DateTime(&quot;2017-07-01T00:00:00.000+02:00&quot;)]" doc:name="Mock currentTime"/>
+        -->
+        <db:select config-ref="MAM_Snapshot" doc:name="Get all organisations">
             <db:parameterized-query><![CDATA[SELECT DISTINCT(organisation)
 FROM sips
 WHERE organisation NOT IN('failures', 'plantentuinmeise');]]></db:parameterized-query>
@@ -34,7 +37,9 @@ WHERE organisation NOT IN('failures', 'plantentuinmeise');]]></db:parameterized-
                     <expression-component doc:name="Expression"><![CDATA[// Do nothing]]></expression-component>
                 </otherwise>
             </choice>
+            <!-- 
             <expression-filter expression="#[flowVars.result.notPublishedInWarranty &gt; 0]" doc:name="Expression"/>
+            -->
             <enricher target="#[flowVars.users]" doc:name="Message Enricher">
                 <flow-ref name="getUsersFromLdapByOrganisationSubFlow" doc:name="getUsersFromLdapByOrganisationSubFlow"/>
             </enricher>
@@ -58,7 +63,7 @@ WHERE organisation NOT IN('failures', 'plantentuinmeise');]]></db:parameterized-
             <db:parameterized-query><![CDATA[SELECT external_id FROM organisations WHERE name = #[flowVars.organisation];]]></db:parameterized-query>
         </db:select>
         <set-variable variableName="or_id" value="#[payload[0].external_id]" doc:name="Set or_id"/>
-        <enricher source="#[payload.description]" target="#[flowVars.prettyOrganisationName]" doc:name="Set prettyOrganisationName">
+        <enricher source="#[payload == null || payload.description == null ? &quot;FOUT&quot; : payload.description]" target="#[flowVars.prettyOrganisationName]" doc:name="Set prettyOrganisationName">
             <ldap:search-one config-ref="LDAP_Configuration" baseDn="ou=apps,ou=users,dc=prd,dc=viaa,dc=be" filter="(&amp;(objectClass=organization)(o=#[flowVars.or_id]))" doc:name="LDAP">
                 <ldap:attributes>
                     <ldap:attribute>description</ldap:attribute>
@@ -128,29 +133,11 @@ WHERE organisation NOT IN('failures', 'plantentuinmeise');]]></db:parameterized-
             <logger message="#[&quot;\n\n&quot;]=================  #[flowVars.emailData.cp_name]  =================#[&quot;\n&quot; + flowVars.emailData.registered + &quot;\n&quot; + flowVars.emailData.archived + &quot;\n&quot; + flowVars.emailData.prevmonth + &quot;\n&quot; + flowVars.emailData.not_published + &quot;\n&quot; + flowVars.emailData.expiring]" level="WARN" doc:name="Logger"/>
     </sub-flow>
     <sub-flow name="retrieveEmailsFlow">
-    	<http:request config-ref="MAM_API" path="/monitoring/login.php" method="GET" doc:name="Get login page for csrf-nonce"/>
-        <byte-array-to-string-transformer doc:name="Byte Array to String"/>
-        <set-variable variableName="csrf-nonce" value="#[org.mule.util.StringUtils.substringAfter(payload, 'name=&quot;monitoring-csrf-nonce&quot; value=&quot;').substring(0,40)]" doc:name="Fetch csrf-nonce"/>
-        <set-variable variableName="cookie" value="#[message.inboundProperties['Set-Cookie'][0]]" doc:name="Set cookie"/>
-        <set-variable variableName="mam_username" value="${mam.username}" doc:name="Set mam_username"/>
-        <set-variable variableName="mam_password" value="${mam.password}" doc:name="Set mam_password"/>
-        <set-payload value="#[&quot;&quot;]" mimeType="text/plain" doc:name="Set Payload empty"/>
-        <set-attachment attachmentName="#['username']" value="#[flowVars.mam_username]" contentType="text/plain" doc:name="Set username"/>
-        <set-attachment attachmentName="#['password']" value="#[flowVars.mam_password]" contentType="text/plain" doc:name="Set password"/>
-        <set-attachment attachmentName="#['monitoring-csrf-nonce']" value="#[flowVars.'csrf-nonce']" contentType="text/plain" doc:name="Set token"/>
-        <logger message="Trying to log in" level="INFO" doc:name="Trying to log in"/>
-        <http:request config-ref="MAM_API" path="/monitoring/login.php" method="POST" doc:name="Post login page to log in">
-            <http:request-builder>
-                <http:header headerName="Cookie" value="#[flowVars.cookie]"/>
-                <http:header headerName="Content-Type" value="multipart/form-data"/>
-            </http:request-builder>
-        </http:request>
-        <logger message="Logged in" level="INFO" doc:name="Logged in"/>
-        <set-payload value="#[&quot;&quot;]" doc:name="Set Payload empty"/>
-        <http:request config-ref="MAM_API" path="/monitoring/json.php?config=default&amp;service=MediaHaven&amp;view=Users&amp;fields[0]=name&amp;order=0&amp;direction=down&amp;cumulative=1&amp;granularity=month&amp;priority=0&amp;results=50&amp;limit=100&amp;filter=" method="GET" doc:name="Get emails for organisation">
+        <http:request config-ref="Mediahaven_Rest_API" path="/monitoring/json.php?config=default&amp;service=MediaHaven&amp;view=Users&amp;fields[0]=name&amp;order=0&amp;direction=down&amp;cumulative=1&amp;granularity=month&amp;priority=0&amp;results=50&amp;limit=100&amp;filter=" method="GET" doc:name="Get emails for organisation">
             <http:request-builder>
                 <http:query-param paramName="values[0]" value="#[flowVars.organisation]"/>
                 <http:header headerName="Cookie" value="#[flowVars.cookie]"/>
+                <http:header headerName="Authorization" value="${mediahaven.authstring}"/>
             </http:request-builder>
         </http:request>
     </sub-flow>
@@ -204,7 +191,7 @@ flowVars.users filter (
     </sub-flow>
     <sub-flow name="get_total_mam_items">
         <set-variable variableName="startDate" value="#[&quot;1985:01&quot;]" doc:name="Set startDate"/>
-        <set-variable variableName="endDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).format(&quot;yyyy:MM&quot;)]" doc:name="Set endDate"/>
+        <set-variable variableName="endDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).format(&quot;yyyy:MM:01 00:00:00&quot;)]" doc:name="Set endDate"/>
         <http:request config-ref="Mediahaven_Rest_API" path="/media/" method="GET" doc:name="Get all from previous month">
             <http:request-builder>
                 <http:query-param paramName="q" value="+((MediaObjectArchiveStatus:on_tape OR MediaObjectArchiveStatus:on_disk) AND MediaObjectArchiveDate:[&quot;#[flowVars.startDate]&quot; TO &quot;#[flowVars.endDate]&quot;] AND MediaObjectOwnerName:#[flowVars.organisation] AND (MediaObjectType:video OR MediaObjectType:audio) AND MediaObjectFragmentisiningestspace:*)"/>
@@ -221,7 +208,7 @@ total: payload.totalNrOfResults]]></dw:set-payload>
     </sub-flow>
     <sub-flow name="get_total_until_last_month">
         <set-variable variableName="startDate" value="#[&quot;1985:01&quot;]" doc:name="Set startDate"/>
-        <set-variable variableName="endDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).plusMonths(-1).format(&quot;yyyy:MM&quot;)]" doc:name="Set endDate"/>
+        <set-variable variableName="endDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).plusMonths(-1).format(&quot;yyyy:MM:01 00:00:00&quot;)]" doc:name="Set endDate"/>
         <http:request config-ref="Mediahaven_Rest_API" path="/media/" method="GET" doc:name="Get all from previous month">
             <http:request-builder>
                 <http:query-param paramName="q" value="+((MediaObjectArchiveStatus:on_tape OR MediaObjectArchiveStatus:on_disk) AND MediaObjectArchiveDate:[&quot;#[flowVars.startDate]&quot; TO &quot;#[flowVars.endDate]&quot;] AND MediaObjectOwnerName:#[flowVars.organisation] AND (MediaObjectType:video OR MediaObjectType:audio) AND MediaObjectFragmentisiningestspace:*)"/>
@@ -237,8 +224,8 @@ totalUntilLastMonth: payload.totalNrOfResults]]></dw:set-payload>
         </dw:transform-message>
     </sub-flow>
     <sub-flow name="get_previous_month">
-        <set-variable variableName="startDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).plusMonths(-1).format(&quot;yyyy:MM&quot;)]" doc:name="Set startDate"/>
-        <set-variable variableName="endDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).format(&quot;yyyy:MM&quot;)]" doc:name="Set endDate"/>
+        <set-variable variableName="startDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).plusMonths(-1).format(&quot;yyyy:MM:01 00:00:00&quot;)]" doc:name="Set startDate"/>
+        <set-variable variableName="endDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).format(&quot;yyyy:MM:01 00:00:00&quot;)]" doc:name="Set endDate"/>
         <http:request config-ref="Mediahaven_Rest_API" path="/media/" method="GET" doc:name="Get all from previous month">
             <http:request-builder>
                 <http:query-param paramName="q" value="+((MediaObjectArchiveStatus:on_tape OR MediaObjectArchiveStatus:on_disk) AND MediaObjectArchiveDate:[&quot;#[flowVars.startDate]&quot; TO &quot;#[flowVars.endDate]&quot;] AND MediaObjectOwnerName:#[flowVars.organisation] AND (MediaObjectType:video OR MediaObjectType:audio) AND MediaObjectFragmentisiningestspace:*)"/>
@@ -254,8 +241,8 @@ previousMonth: payload.totalNrOfResults]]></dw:set-payload>
         </dw:transform-message>
     </sub-flow>
     <sub-flow name="get_not_published_in_warranty">
-        <set-variable variableName="startDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).plusMonths(-6).format(&quot;yyyy:MM&quot;)]" doc:name="Set startDate"/>
-        <set-variable variableName="endDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).format(&quot;yyyy:MM&quot;)]" doc:name="Set endDate"/>
+        <set-variable variableName="startDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).plusMonths(-6).format(&quot;yyyy:MM:01 00:00:00&quot;)]" doc:name="Set startDate"/>
+        <set-variable variableName="endDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).format(&quot;yyyy:MM:01 00:00:00&quot;)]" doc:name="Set endDate"/>
         <http:request config-ref="Mediahaven_Rest_API" path="/media/" method="GET" doc:name="Get all from previous month">
             <http:request-builder>
                 <http:query-param paramName="q" value="+((MediaObjectArchiveStatus:on_tape OR MediaObjectArchiveStatus:on_disk) AND MediaObjectArchiveDate:[&quot;#[flowVars.startDate]&quot; TO &quot;#[flowVars.endDate]&quot;] AND MediaObjectOwnerName:#[flowVars.organisation] AND (MediaObjectType:video OR MediaObjectType:audio) AND MediaObjectFragmentisiningestspace:1)"/>
@@ -271,8 +258,8 @@ notPublishedInWarranty: payload.totalNrOfResults]]></dw:set-payload>
         </dw:transform-message>
     </sub-flow>
    <sub-flow name="get_not_published_about_to_expire">
-        <set-variable variableName="startDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).plusMonths(-5).format(&quot;yyyy:MM&quot;)]" doc:name="Set startDate"/>
-        <set-variable variableName="endDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).plusMonths(-4).format(&quot;yyyy:MM&quot;)]" doc:name="Set endDate"/>
+        <set-variable variableName="startDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).plusMonths(-5).format(&quot;yyyy:MM:01 00:00:00&quot;)]" doc:name="Set startDate"/>
+        <set-variable variableName="endDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).plusMonths(-6).format(&quot;yyyy:MM:01 00:00:00&quot;)]" doc:name="Set endDate"/>
         <http:request config-ref="Mediahaven_Rest_API" path="/media/" method="GET" doc:name="Get all from previous month">
             <http:request-builder>
                 <http:query-param paramName="q" value="+((MediaObjectArchiveStatus:on_tape OR MediaObjectArchiveStatus:on_disk) AND MediaObjectArchiveDate:[&quot;#[flowVars.startDate]&quot; TO &quot;#[flowVars.endDate]&quot;] AND MediaObjectOwnerName:#[flowVars.organisation] AND (MediaObjectType:video OR MediaObjectType:audio) AND MediaObjectFragmentisiningestspace:1)"/>
