@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<mule xmlns:schedulers="http://www.mulesoft.org/schema/mule/schedulers" xmlns:ldap="http://www.mulesoft.org/schema/mule/ldap" xmlns:metadata="http://www.mulesoft.org/schema/mule/metadata" xmlns:json="http://www.mulesoft.org/schema/mule/json" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw" xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking" xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+<mule xmlns:slack="http://www.mulesoft.org/schema/mule/slack" xmlns:schedulers="http://www.mulesoft.org/schema/mule/schedulers" xmlns:ldap="http://www.mulesoft.org/schema/mule/ldap" xmlns:metadata="http://www.mulesoft.org/schema/mule/metadata" xmlns:json="http://www.mulesoft.org/schema/mule/json" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw" xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking" xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
 	xmlns:spring="http://www.springframework.org/schema/beans" 
 	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
 	xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
@@ -11,20 +11,23 @@ http://www.mulesoft.org/schema/mule/ee/dw http://www.mulesoft.org/schema/mule/ee
 http://www.mulesoft.org/schema/mule/json http://www.mulesoft.org/schema/mule/json/current/mule-json.xsd
 http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
 http://www.mulesoft.org/schema/mule/ldap http://www.mulesoft.org/schema/mule/ldap/current/mule-ldap.xsd
-http://www.mulesoft.org/schema/mule/schedulers http://www.mulesoft.org/schema/mule/schedulers/current/mule-schedulers.xsd">
+http://www.mulesoft.org/schema/mule/schedulers http://www.mulesoft.org/schema/mule/schedulers/current/mule-schedulers.xsd
+http://www.mulesoft.org/schema/mule/slack http://www.mulesoft.org/schema/mule/slack/current/mule-slack.xsd">
     <flow name="batchCreatorFlow" initialState="started">
         <poll doc:name="Poll">
-            <schedulers:cron-scheduler expression="0 0 0 1 * ?"/>
+            <fixed-frequency-scheduler frequency="1000" timeUnit="DAYS"/>
             <logger message="Starting..." level="WARN" doc:name="Logger"/>
         </poll>
         <set-variable variableName="currentTime" value="#[server.dateTime]" doc:name="Set currentTime"/>
+        <set-variable variableName="slackStringBuilder" value="#[new java.lang.StringBuilder()]" doc:name="Set slackStringBuilder"/>
         <!-- 
         <set-variable variableName="currentTime" value="#[new org.mule.el.datetime.DateTime(&quot;2017-07-01T00:00:00.000+02:00&quot;)]" doc:name="Mock currentTime"/>
         -->
         <db:select config-ref="MAM_Snapshot" doc:name="Get all organisations">
             <db:parameterized-query><![CDATA[SELECT DISTINCT(organisation)
 FROM sips
-WHERE organisation NOT IN('failures', 'plantentuinmeise');]]></db:parameterized-query>
+WHERE organisation NOT IN('failures', 'plantentuinmeise')
+LIMIT 3;]]></db:parameterized-query>
         </db:select>
         <set-variable variableName="endquery" value="(now() - interval '1' month)" doc:name="Set endquery"/>
         <set-variable variableName="nrOfOrganisations" value="#[payload.size()]" doc:name="Set nrOfOrganisations"/>
@@ -57,6 +60,17 @@ WHERE organisation NOT IN('failures', 'plantentuinmeise');]]></db:parameterized-
             <flow-ref name="sendEmailsFlow" doc:name="sendEmailsFlow"/>
             
         </foreach>
+        <async doc:name="Async">
+            <set-variable variableName="attachments" value="#[new java.util.ArrayList()]" doc:name="Set attachments"/>
+            <expression-component doc:name="Expression"><![CDATA[org.mule.modules.slack.client.model.chat.attachment.ChatAttachment attachment = new org.mule.modules.slack.client.model.chat.attachment.ChatAttachment();
+
+attachment.setText(flowVars.slackStringBuilder.toString());
+attachment.setTitle(server.dateTime.toString());
+
+flowVars.attachments.add(attachment);]]></expression-component>
+            <logger message="Sending a message to Slack!" level="WARN" doc:name="Logger"/>
+            <slack:post-message-with-attachment config-ref="Slack__Token_Configuration" channelId="C5U7LPST0" username="Auto Publish Mail Bot" message="Attached are the logs from the auto publish that ran on #[org.joda.time.format.DateTimeFormat.forPattern(&quot;E d MMMM yyyy&quot;).print(new org.joda.time.DateTime())]" chatAttachmentList-ref="#[flowVars.attachments]" doc:name="Slack"/>
+        </async>
     </flow>
     <sub-flow name="processOrganisation">
         <set-variable variableName="organisation" value="#[payload.organisation]" doc:name="Set organisation"/>
@@ -131,6 +145,19 @@ WHERE organisation NOT IN('failures', 'plantentuinmeise');]]></db:parameterized-
 }]]></dw:set-payload>
             </dw:transform-message>
         </enricher>
+        <expression-component doc:name="Append string to slackStringBuilder"><![CDATA[flowVars.slackStringBuilder
+	.append("=================  ")
+	.append(flowVars.emailData.cp_name)
+	.append("  =================\n")
+	.append(flowVars.emailData.registered)
+	.append("\n")
+	.append(flowVars.emailData.archived)
+	.append("\n")
+	.append(flowVars.emailData.prevmonth)
+	.append("\n")
+	.append(flowVars.emailData.not_published)
+	.append("\n")
+	.append(flowVars.emailData.expiring);]]></expression-component>
             <logger message="#[&quot;\n\n&quot;]=================  #[flowVars.emailData.cp_name]  =================#[&quot;\n&quot; + flowVars.emailData.registered + &quot;\n&quot; + flowVars.emailData.archived + &quot;\n&quot; + flowVars.emailData.prevmonth + &quot;\n&quot; + flowVars.emailData.not_published + &quot;\n&quot; + flowVars.emailData.expiring]" level="WARN" doc:name="Logger"/>
     </sub-flow>
     <sub-flow name="retrieveEmailsFlow">
@@ -165,6 +192,8 @@ flowVars.users filter (
     </sub-flow>
     <sub-flow name="sendEmailsFlow">
         <foreach collection="#[flowVars.users]" doc:name="For Each">
+            <expression-component doc:name="Append string to slackStringBuilder"><![CDATA[flowVars.slackStringBuilder
+	.append(String.format("\n|-----> Sending email to %s (%s)", payload.givenName, payload.mail));]]></expression-component>
             <logger message="Sending email to #[payload.givenName] (#[payload.mail])" level="WARN" doc:name="Logger"/>
             <dw:transform-message doc:name="Transform Message">
                 <dw:set-payload><![CDATA[%dw 1.0
@@ -189,6 +218,8 @@ flowVars.users filter (
             <http:request config-ref="GlueConfiguration" path="/efea1807-e31a-417e-9ec4-1b63a8e5d3cb/send" method="POST" doc:name="HTTP"/>
         	-->
         </foreach>
+        <expression-component doc:name="Append string to slackStringBuilder"><![CDATA[flowVars.slackStringBuilder
+	.append("\n\n\n");]]></expression-component>
     </sub-flow>
     <sub-flow name="get_total_mam_items">
         <set-variable variableName="startDate" value="#[&quot;1985:01&quot;]" doc:name="Set startDate"/>

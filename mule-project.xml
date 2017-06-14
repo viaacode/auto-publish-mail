@@ -2,4 +2,6 @@
 <mule-project xmlns="http://www.mulesoft.com/tooling/project" runtimeId="org.mule.tooling.server.3.7.4.ee" schemaVersion="5.3.0.0">
     <name>auto-publish-mail</name>
     <description></description>
+    <muleExtension name="LDAP" qualifier="org.mule.tooling.ui.contribution.ldap.3.5.0"/>
+    <muleExtension name="Slack" qualifier="org.mule.tooling.ui.contribution.slack.3.5.0"/>
 </mule-project>

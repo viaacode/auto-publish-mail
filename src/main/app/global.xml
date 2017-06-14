@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<mule xmlns:ldap="http://www.mulesoft.org/schema/mule/ldap"
+<mule xmlns:slack="http://www.mulesoft.org/schema/mule/slack" xmlns:ldap="http://www.mulesoft.org/schema/mule/ldap"
 	xmlns:http="http://www.mulesoft.org/schema/mule/http"
 	xmlns:amqp="http://www.mulesoft.org/schema/mule/amqp" xmlns:context="http://www.springframework.org/schema/context" xmlns:db="http://www.mulesoft.org/schema/mule/db"
 	xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
@@ -12,7 +12,8 @@ http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/cu
 http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
 http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
 http://www.springframework.org/schema/context http://www.springframework.org/schema/context/spring-context-current.xsd
-http://www.mulesoft.org/schema/mule/amqp http://www.mulesoft.org/schema/mule/amqp/current/mule-amqp.xsd">
+http://www.mulesoft.org/schema/mule/amqp http://www.mulesoft.org/schema/mule/amqp/current/mule-amqp.xsd
+http://www.mulesoft.org/schema/mule/slack http://www.mulesoft.org/schema/mule/slack/current/mule-slack.xsd">
  	<context:property-placeholder location="${mule.env}.properties"/>
  	
  	<http:request-config name="Mediahaven_Rest_API" host="${mediahaven.host}" port="${mediahaven.port}" basePath="${mediahaven.basepath}" doc:name="HTTP Request Configuration" protocol="HTTPS"/>
@@ -35,4 +36,5 @@ http://www.mulesoft.org/schema/mule/amqp http://www.mulesoft.org/schema/mule/amq
 	            <ldap:extended-configuration key="java.naming.ldap.factory.socket">org.mule.module.ldap.security.BypassTrustSSLSocketFactory</ldap:extended-configuration>
 	        </ldap:extended-configuration>
    	</ldap:config>
+    <slack:token-config name="Slack__Token_Configuration" accessToken="${slack.token}" doc:name="Slack: Token Configuration"/>
 </mule>
