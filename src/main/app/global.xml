@@ -34,5 +34,5 @@ http://www.mulesoft.org/schema/mule/amqp http://www.mulesoft.org/schema/mule/amq
 	        <ldap:extended-configuration>
 	            <ldap:extended-configuration key="java.naming.ldap.factory.socket">org.mule.module.ldap.security.BypassTrustSSLSocketFactory</ldap:extended-configuration>
 	        </ldap:extended-configuration>
-    	</ldap:config>
+   	</ldap:config>
 </mule>
