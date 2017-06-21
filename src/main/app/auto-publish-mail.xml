@@ -15,7 +15,7 @@ http://www.mulesoft.org/schema/mule/schedulers http://www.mulesoft.org/schema/mu
 http://www.mulesoft.org/schema/mule/slack http://www.mulesoft.org/schema/mule/slack/current/mule-slack.xsd">
     <flow name="batchCreatorFlow" initialState="started">
         <poll doc:name="Poll">
-            <fixed-frequency-scheduler frequency="1000" timeUnit="DAYS"/>
+            <schedulers:cron-scheduler expression="0 0 0 1 * ?"/>
             <logger message="Starting..." level="WARN" doc:name="Logger"/>
         </poll>
         <set-variable variableName="currentTime" value="#[server.dateTime]" doc:name="Set currentTime"/>
@@ -69,7 +69,7 @@ attachment.setTitle(server.dateTime.toString());
 
 flowVars.attachments.add(attachment);]]></expression-component>
             <logger message="Sending a message to Slack!" level="WARN" doc:name="Logger"/>
-            <slack:post-message-with-attachment config-ref="Slack__Token_Configuration" channelId="C5U7LPST0" username="Auto Publish Mail Bot" message="Attached are the logs from the auto publish that ran on #[org.joda.time.format.DateTimeFormat.forPattern(&quot;E d MMMM yyyy&quot;).print(new org.joda.time.DateTime())]" chatAttachmentList-ref="#[flowVars.attachments]" doc:name="Slack"/>
+            <slack:post-message-with-attachment config-ref="Slack__Token_Configuration" channelId="${slack.channelid}" username="Auto Publish Mail Bot" message="Attached are the logs from the auto publish that ran on #[org.joda.time.format.DateTimeFormat.forPattern(&quot;E d MMMM yyyy&quot;).print(new org.joda.time.DateTime())]" chatAttachmentList-ref="#[flowVars.attachments]" doc:name="Slack"/>
         </async>
     </flow>
     <sub-flow name="processOrganisation">
