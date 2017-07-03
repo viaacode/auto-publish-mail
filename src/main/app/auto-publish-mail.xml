@@ -22,7 +22,8 @@ http://www.mulesoft.org/schema/mule/amqp http://www.mulesoft.org/schema/mule/amq
             <db:select config-ref="MAM_Snapshot" doc:name="Get all organisations">
                 <db:parameterized-query><![CDATA[SELECT DISTINCT(organisation)
 FROM sips
-WHERE organisation NOT IN('failures', 'plantentuinmeise');]]></db:parameterized-query>
+WHERE organisation NOT IN('failures', 'plantentuinmeise')
+LIMIT 3;]]></db:parameterized-query>
             </db:select>
         </until-successful>
         <!-- 
@@ -62,7 +63,7 @@ attachment.setTitle(server.dateTime.toString());
 
 flowVars.attachments.add(attachment);]]></expression-component>
             <logger message="Sending a message to Slack!" level="WARN" doc:name="Logger"/>
-            <slack:post-message-with-attachment config-ref="Slack__Token_Configuration" channelId="${slack.channelid}" username="Auto Publish Mail Bot" message="Attached are the logs from the auto publish that ran on #[org.joda.time.format.DateTimeFormat.forPattern(&quot;E d MMMM yyyy&quot;).print(new org.joda.time.DateTime())]" chatAttachmentList-ref="#[flowVars.attachments]" doc:name="Slack"/>
+            <slack:upload-file-as-input-streams config-ref="Slack__Token_Configuration"     doc:name="Slack" channelID="C5U7J2RLL" fileName="autopublish-#[org.joda.time.format.DateTimeFormat.forPattern(&quot;E d MMMM yyyy&quot;).print(new org.joda.time.DateTime())].log" fileType="text" initialComment="Attached are the logs from the auto publish that ran on #[org.joda.time.format.DateTimeFormat.forPattern(&quot;E d MMMM yyyy&quot;).print(new org.joda.time.DateTime())]" inputStream-ref="#[new ByteArrayInputStream(flowVars.slackStringBuilder.toString().getBytes())]" title="Autopublish logfile #[org.joda.time.format.DateTimeFormat.forPattern(&quot;E d MMMM yyyy&quot;).print(new org.joda.time.DateTime())]"/>
         </async>
     </flow>
     <sub-flow name="processOrganisation">
@@ -146,7 +147,7 @@ flowVars.attachments.add(attachment);]]></expression-component>
             </dw:transform-message>
         </enricher>
         <expression-component doc:name="Append string to slackStringBuilder"><![CDATA[flowVars.slackStringBuilder
-	.append("=================  ")
+	.append("\n\n=================  ")
 	.append(flowVars.emailData.cp_name)
 	.append("  =================\nAantal items geregistreerd: ")
 	.append(flowVars.emailData.registered)
