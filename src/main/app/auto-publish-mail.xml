@@ -15,49 +15,44 @@ http://www.mulesoft.org/schema/mule/schedulers http://www.mulesoft.org/schema/mu
 http://www.mulesoft.org/schema/mule/slack http://www.mulesoft.org/schema/mule/slack/current/mule-slack.xsd
 http://www.mulesoft.org/schema/mule/amqp http://www.mulesoft.org/schema/mule/amqp/current/mule-amqp.xsd">
     <flow name="batchCreatorFlow" initialState="started">
-        <amqp:inbound-endpoint queueName="${rabbit.notificationqueue}" responseTimeout="10000" exchange-pattern="request-response" queueDurable="true" doc:name="AMQP-0-9"/>
+        <amqp:inbound-endpoint queueName="${rabbit.notificationqueue}" responseTimeout="10000"  queueDurable="true" doc:name="AMQP-0-9" connector-ref="AMQP_0_9_Connector"/>
         <set-variable variableName="currentTime" value="#[server.dateTime]" doc:name="Set currentTime"/>
         <set-variable variableName="slackStringBuilder" value="#[new java.lang.StringBuilder()]" doc:name="Set slackStringBuilder"/>
+        <until-successful maxRetries="50" millisBetweenRetries="5000" synchronous="true" doc:name="Until Successful">
+            <db:select config-ref="MAM_Snapshot" doc:name="Get all organisations">
+                <db:parameterized-query><![CDATA[SELECT DISTINCT(organisation)
+FROM sips
+WHERE organisation NOT IN('failures', 'plantentuinmeise');]]></db:parameterized-query>
+            </db:select>
+        </until-successful>
         <!-- 
         <set-variable variableName="currentTime" value="#[new org.mule.el.datetime.DateTime(&quot;2017-07-01T00:00:00.000+02:00&quot;)]" doc:name="Mock currentTime"/>
         -->
-        <db:select config-ref="MAM_Snapshot" doc:name="Get all organisations">
-            <db:parameterized-query><![CDATA[SELECT DISTINCT(organisation)
-FROM sips
-WHERE organisation NOT IN('failures', 'plantentuinmeise')
-LIMIT 3;]]></db:parameterized-query>
-        </db:select>
         <set-variable variableName="endquery" value="(now() - interval '1' month)" doc:name="Set endquery"/>
         <set-variable variableName="nrOfOrganisations" value="#[payload.size()]" doc:name="Set nrOfOrganisations"/>
         <foreach doc:name="For Each organisation">
             <flow-ref name="processOrganisation" doc:name="processOrganisation"/>
+            <enricher target="#[flowVars.users]" doc:name="Message Enricher">
+                <flow-ref name="getUsersFromLdapByOrganisationSubFlow" doc:name="getUsersFromLdapByOrganisationSubFlow"/>
+            </enricher>
+            <enricher target="#[flowVars.users]" doc:name="Message Enricher">
+                <flow-ref name="filterEmailsFlow" doc:name="filterEmailsFlow"/>
+            </enricher>
             <choice doc:name="Choice">
                 <when expression="#[flowVars.result.notPublishedInWarranty == 0]">
                     <logger message="Not sending any email for #[flowVars.prettyOrganisationName]" level="WARN" doc:name="Logger"/>
                 </when>
                 <otherwise>
                     <expression-component doc:name="Expression"><![CDATA[// Do nothing]]></expression-component>
+                    <flow-ref name="sendEmailsFlow" doc:name="sendEmailsFlow"/>
                 </otherwise>
             </choice>
             <!-- 
             <expression-filter expression="#[flowVars.result.notPublishedInWarranty &gt; 0]" doc:name="Expression"/>
             -->
-            <enricher target="#[flowVars.users]" doc:name="Message Enricher">
-                <flow-ref name="getUsersFromLdapByOrganisationSubFlow" doc:name="getUsersFromLdapByOrganisationSubFlow"/>
-            </enricher>
-            <expression-component doc:name="Expression"><![CDATA[//Map map1 = new java.util.HashMap();
-//map1.put("login", "dieter.vanhoof@bewire.be");
-//ArrayList list = new java.util.ArrayList();
-
-//list.add(map1);
-
-//flowVars.users = list;]]></expression-component>
-            <enricher doc:name="Message Enricher" target="#[flowVars.users]">
-                <flow-ref name="filterEmailsFlow" doc:name="filterEmailsFlow"/>
-            </enricher>
-            <flow-ref name="sendEmailsFlow" doc:name="sendEmailsFlow"/>
             
         </foreach>
+        <amqp:acknowledge-message doc:name="AMQP-0-9 Acknowledge Message"/>
         <async doc:name="Async">
             <set-variable variableName="attachments" value="#[new java.util.ArrayList()]" doc:name="Set attachments"/>
             <expression-component doc:name="Expression"><![CDATA[org.mule.modules.slack.client.model.chat.attachment.ChatAttachment attachment = new org.mule.modules.slack.client.model.chat.attachment.ChatAttachment();
@@ -72,16 +67,20 @@ flowVars.attachments.add(attachment);]]></expression-component>
     </flow>
     <sub-flow name="processOrganisation">
         <set-variable variableName="organisation" value="#[payload.organisation]" doc:name="Set organisation"/>
-        <db:select config-ref="MAM_Snapshot" doc:name="Database">
-            <db:parameterized-query><![CDATA[SELECT external_id FROM organisations WHERE name = #[flowVars.organisation];]]></db:parameterized-query>
-        </db:select>
+        <until-successful maxRetries="50" millisBetweenRetries="5000" synchronous="true" doc:name="Until Successful">
+            <db:select config-ref="MAM_Snapshot" doc:name="Database">
+                <db:parameterized-query><![CDATA[SELECT external_id FROM organisations WHERE name = #[flowVars.organisation];]]></db:parameterized-query>
+            </db:select>
+        </until-successful>
         <set-variable variableName="or_id" value="#[payload[0].external_id]" doc:name="Set or_id"/>
         <enricher source="#[payload == null || payload.description == null ? &quot;FOUT&quot; : payload.description]" target="#[flowVars.prettyOrganisationName]" doc:name="Set prettyOrganisationName">
-            <ldap:search-one config-ref="LDAP_Configuration" baseDn="ou=apps,ou=users,dc=prd,dc=viaa,dc=be" filter="(&amp;(objectClass=organization)(o=#[flowVars.or_id]))" doc:name="LDAP">
-                <ldap:attributes>
-                    <ldap:attribute>description</ldap:attribute>
-                </ldap:attributes>
-            </ldap:search-one>
+            <until-successful maxRetries="50" millisBetweenRetries="5000" synchronous="true" doc:name="Until Successful">
+                <ldap:search-one config-ref="LDAP_Configuration" baseDn="ou=apps,ou=users,dc=prd,dc=viaa,dc=be" filter="(&amp;(objectClass=organization)(o=#[flowVars.or_id]))" doc:name="LDAP">
+                    <ldap:attributes>
+                        <ldap:attribute>description</ldap:attribute>
+                    </ldap:attributes>
+                </ldap:search-one>
+            </until-successful>
         </enricher>
             <enricher target="#[flowVars.query]" doc:name="Set query">
                 <set-payload value="SELECT fragment_id, external_id, title, organisation, archive_date, #[flowVars.enddate] as end_date FROM sips WHERE organisation = '#[flowVars.organisation]' AND archive_date &gt;= '#[flowVars.startdate]' AND archive_date &lt; '#[flowVars.enddate]' AND archive_status IN('on_tape', 'on_disk') ORDER BY archive_date ASC;" doc:name="Set Payload"/>
@@ -116,7 +115,9 @@ flowVars.attachments.add(attachment);]]></expression-component>
             </enricher>
             <set-variable variableName="totalMamIncrease" value="#[flowVars.result.total == 0 || flowVars.result.totalUntilLastMonth == 0 ? 0.0 : Math.round(((flowVars.result.total / flowVars.result.totalUntilLastMonth) - 1) * 10000.0) / 100.0]" doc:name="Set totalMamIncrease"/>
             <set-variable variableName="totalAMSIncrease" value="#[flowVars.result.totalRegistered == 0 || flowVars.result.registeredUntilLastMonth == 0 ? 0.0 : Math.round(((flowVars.result.totalRegistered / flowVars.result.registeredUntilLastMonth) - 1) * 10000.0) / 100.0]" doc:name="Set totalAMSIncrease"/>
-        <set-variable variableName="currentMonth" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).format(&quot;MM/yyyy&quot;)]" doc:name="Set currentMonth"/>
+        <!-- Set currentMonth to the NLD name -->
+        <set-variable variableName="currentMonth" value="#[flowVars.currentTime.toCalendar().getDisplayName(java.util.Calendar.MONTH, java.util.Calendar.LONG, new java.util.Locale(&quot;nl&quot;))]" doc:name="Set currentMonth" doc:description="Set currentMonth to the NLD name"/>
+        <set-variable variableName="currentYear" value="#[flowVars.currentTime.getYear()]" doc:name="Set currentYear"/>
         <enricher target="#[flowVars.emailData]" doc:name="Message Enricher">
             <dw:transform-message doc:name="Transform Message" metadata:id="640a5579-ac2e-473a-8917-0a0c355c81dd">
                 <dw:input-variable doc:sample="sample_data/string.dwl" mimeType="application/java" variableName="organisation"/>
@@ -132,51 +133,57 @@ flowVars.attachments.add(attachment);]]></expression-component>
 ---
 {
 	"currentMonth": flowVars.currentMonth,
+	"currentYear": flowVars.currentYear,
 	"cp_name": flowVars.prettyOrganisationName,
-	"registered": 'Aantal items geregistreerd: ' ++ toCorrectFormat(flowVars.result.totalRegistered) ++
+	"registered": toCorrectFormat(flowVars.result.totalRegistered) ++
 			parseIncrease(flowVars.totalAMSIncrease),
-	"archived": 'Uw archief bevat momenteel: ' ++ toCorrectFormat(flowVars.result.total) ++ ' items' ++
+	"archived": toCorrectFormat(flowVars.result.total) ++
 			parseIncrease(flowVars.totalMamIncrease),
-	"prevmonth": 'Aantal items gearchiveerd in de voorbije maand: ' ++ toCorrectFormat(flowVars.result.previousMonth),
-	"not_published": 'Niet gepubliceerde items binnen garantieperiode: ' ++ toCorrectFormat(flowVars.result.notPublishedInWarranty),
-	"expiring": 'Van ' ++ toCorrectFormat(flowVars.result.notPublishedAboutToExpire) ++ ' niet gepubliceerde items vervalt de garantieperiode deze maand'
+	"prevmonth": toCorrectFormat(flowVars.result.previousMonth),
+	"not_published": toCorrectFormat(flowVars.result.notPublishedInWarranty),
+	"expiring": toCorrectFormat(flowVars.result.notPublishedAboutToExpire)
 }]]></dw:set-payload>
             </dw:transform-message>
         </enricher>
         <expression-component doc:name="Append string to slackStringBuilder"><![CDATA[flowVars.slackStringBuilder
 	.append("=================  ")
 	.append(flowVars.emailData.cp_name)
-	.append("  =================\n")
+	.append("  =================\nAantal items geregistreerd: ")
 	.append(flowVars.emailData.registered)
-	.append("\n")
+	.append("\nUw archief bevat momenteel: ")
 	.append(flowVars.emailData.archived)
-	.append("\n")
+	.append("\nAantal items gearchiveerd in de voorbije maand: ")
 	.append(flowVars.emailData.prevmonth)
-	.append("\n")
+	.append("\nNiet gepubliceerde items binnen garantieperiode: ")
 	.append(flowVars.emailData.not_published)
-	.append("\n")
-	.append(flowVars.emailData.expiring);]]></expression-component>
-            <logger message="#[&quot;\n\n&quot;]=================  #[flowVars.emailData.cp_name]  =================#[&quot;\n&quot; + flowVars.emailData.registered + &quot;\n&quot; + flowVars.emailData.archived + &quot;\n&quot; + flowVars.emailData.prevmonth + &quot;\n&quot; + flowVars.emailData.not_published + &quot;\n&quot; + flowVars.emailData.expiring]" level="WARN" doc:name="Logger"/>
+	.append("\nVan ")
+	.append(flowVars.emailData.expiring)
+	.append(" niet gepubliceerde items vervalt de garantieperiode deze maand");]]></expression-component>
+            <logger message="#[new java.lang.StringBuilder().append(&quot;=================  &quot;).append(flowVars.emailData.cp_name).append(&quot;  =================\nAantal items geregistreerd: &quot;).append(flowVars.emailData.registered).append(&quot;\nUw archief bevat momenteel: &quot;).append(flowVars.emailData.archived).append(&quot;\nAantal items gearchiveerd in de voorbije maand: &quot;).append(flowVars.emailData.prevmonth).append(&quot;\nNiet gepubliceerde items binnen garantieperiode: &quot;).append(flowVars.emailData.not_published).append(&quot;\nVan &quot;).append(flowVars.emailData.expiring).append(&quot; niet gepubliceerde items vervalt de garantieperiode deze maand&quot;).toString()]" level="WARN" doc:name="Logger"/>
     </sub-flow>
     <sub-flow name="retrieveEmailsFlow">
-        <http:request config-ref="Mediahaven_Rest_API" path="/monitoring/json.php?config=default&amp;service=MediaHaven&amp;view=Users&amp;fields[0]=name&amp;order=0&amp;direction=down&amp;cumulative=1&amp;granularity=month&amp;priority=0&amp;results=50&amp;limit=100&amp;filter=" method="GET" doc:name="Get emails for organisation">
-            <http:request-builder>
-                <http:query-param paramName="values[0]" value="#[flowVars.organisation]"/>
-                <http:header headerName="Cookie" value="#[flowVars.cookie]"/>
-                <http:header headerName="Authorization" value="${mediahaven.authstring}"/>
-            </http:request-builder>
-        </http:request>
+        <until-successful maxRetries="50" millisBetweenRetries="5000" synchronous="true" doc:name="Until Successful">
+            <http:request config-ref="Mediahaven_Rest_API" path="/monitoring/json.php?config=default&amp;service=MediaHaven&amp;view=Users&amp;fields[0]=name&amp;order=0&amp;direction=down&amp;cumulative=1&amp;granularity=month&amp;priority=0&amp;results=50&amp;limit=100&amp;filter=" method="GET" doc:name="Get emails for organisation">
+                <http:request-builder>
+                    <http:query-param paramName="values[0]" value="#[flowVars.organisation]"/>
+                    <http:header headerName="Cookie" value="#[flowVars.cookie]"/>
+                    <http:header headerName="Authorization" value="${mediahaven.authstring}"/>
+                </http:request-builder>
+            </http:request>
+        </until-successful>
     </sub-flow>
     <sub-flow name="getUsersFromLdapByOrganisationSubFlow">
-        <ldap:search config-ref="LDAP_Configuration" baseDn="ou=apps,ou=users,dc=prd,dc=viaa,dc=be" filter="(&amp;(objectclass=inetOrgPerson)(o=#[flowVars.or_id]))" scope="SUB_TREE" structuralObjectClass="inetOrgPerson" doc:name="LDAP">
-	        <ldap:attributes>
-	            <ldap:attribute>mail</ldap:attribute>
-	            <ldap:attribute>givenName</ldap:attribute>
-	        </ldap:attributes>
-        </ldap:search>
+        <until-successful maxRetries="50" millisBetweenRetries="5000" doc:name="Until Successful" synchronous="true">
+            <ldap:search config-ref="LDAP_Configuration" baseDn="ou=apps,ou=users,dc=prd,dc=viaa,dc=be" filter="(&amp;(objectclass=inetOrgPerson)(o=#[flowVars.or_id]))" scope="SUB_TREE" structuralObjectClass="inetOrgPerson" doc:name="LDAP">
+                <ldap:attributes>
+                    <ldap:attribute>mail</ldap:attribute>
+                    <ldap:attribute>givenName</ldap:attribute>
+                </ldap:attributes>
+            </ldap:search>
+        </until-successful>
     </sub-flow>
     <sub-flow name="filterEmailsFlow">
-        <dw:transform-message doc:name="Transform Message">
+        <dw:transform-message doc:name="Filter Emails">
             <dw:input-payload doc:sample="sample_data/json.json"/>
             <dw:set-payload><![CDATA[%dw 1.0
 %output application/java
@@ -193,14 +200,16 @@ flowVars.users filter (
             <expression-component doc:name="Append string to slackStringBuilder"><![CDATA[flowVars.slackStringBuilder
 	.append(String.format("\n|-----> Sending email to %s (%s)", payload.givenName, payload.mail));]]></expression-component>
             <logger message="Sending email to #[payload.givenName] (#[payload.mail])" level="WARN" doc:name="Logger"/>
-            <dw:transform-message doc:name="Transform Message">
+            <dw:transform-message doc:name="Create POST data">
                 <dw:set-payload><![CDATA[%dw 1.0
 %output application/json
 ---
 {
     "To": [payload.email],
     "Data": {
+    	"given_name": payload.givenName,
         "currentMonth": flowVars.emailData.currentMonth,
+        "currentYear": flowVars.emailData.currentYear,
         "x-apple-data-detectors": "x-apple-data-detectorsTestValue",
         "owa": "owaTestValue",
         "cp_name": flowVars.emailData.cp_name,
@@ -212,8 +221,10 @@ flowVars.users filter (
     }
 }]]></dw:set-payload>
             </dw:transform-message>
-            <!-- 
-            <http:request config-ref="GlueConfiguration" path="/efea1807-e31a-417e-9ec4-1b63a8e5d3cb/send" method="POST" doc:name="HTTP"/>
+            <!--
+            <until-successful maxRetries="50" millisBetweenRetries="5000" synchronous="true" doc:name="Until Successful">
+                <http:request config-ref="GlueConfiguration" path="/${glue.mailtemplateid}/send" method="POST" doc:name="HTTP"/>
+            </until-successful>
         	-->
         </foreach>
         <expression-component doc:name="Append string to slackStringBuilder"><![CDATA[flowVars.slackStringBuilder
@@ -222,13 +233,15 @@ flowVars.users filter (
     <sub-flow name="get_total_mam_items">
         <set-variable variableName="startDate" value="#[&quot;1985:01&quot;]" doc:name="Set startDate"/>
         <set-variable variableName="endDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).format(&quot;yyyy:MM:01 00:00:00&quot;)]" doc:name="Set endDate"/>
-        <http:request config-ref="Mediahaven_Rest_API" path="/media/" method="GET" doc:name="Get all from previous month">
-            <http:request-builder>
-                <http:query-param paramName="q" value="+((MediaObjectArchiveStatus:on_tape OR MediaObjectArchiveStatus:on_disk) AND MediaObjectArchiveDate:[&quot;#[flowVars.startDate]&quot; TO &quot;#[flowVars.endDate]&quot;] AND MediaObjectOwnerName:#[flowVars.organisation] AND (MediaObjectType:video OR MediaObjectType:audio) AND MediaObjectFragmentisiningestspace:*)"/>
-                <http:query-param paramName="nrOfResults" value="1"/>
-                <http:header headerName="Authorization" value="${mediahaven.authstring}"/>
-            </http:request-builder>
-        </http:request>
+        <until-successful maxRetries="50" millisBetweenRetries="5000" synchronous="true" doc:name="Until Successful">
+            <http:request config-ref="Mediahaven_Rest_API" path="/media/" method="GET" doc:name="Get all from previous month">
+                <http:request-builder>
+                    <http:query-param paramName="q" value="+((MediaObjectArchiveStatus:on_tape OR MediaObjectArchiveStatus:on_disk) AND MediaObjectArchiveDate:[&quot;#[flowVars.startDate]&quot; TO &quot;#[flowVars.endDate]&quot;] AND MediaObjectOwnerName:#[flowVars.organisation] AND (MediaObjectType:video OR MediaObjectType:audio OR MediaObjectType:newspaper) AND MediaObjectFragmentisiningestspace:*)"/>
+                    <http:query-param paramName="nrOfResults" value="1"/>
+                    <http:header headerName="Authorization" value="${mediahaven.authstring}"/>
+                </http:request-builder>
+            </http:request>
+        </until-successful>
         <dw:transform-message doc:name="Transform Message">
             <dw:set-payload><![CDATA[%dw 1.0
 %output application/java
@@ -239,13 +252,15 @@ total: payload.totalNrOfResults]]></dw:set-payload>
     <sub-flow name="get_total_until_last_month">
         <set-variable variableName="startDate" value="#[&quot;1985:01&quot;]" doc:name="Set startDate"/>
         <set-variable variableName="endDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).plusMonths(-1).format(&quot;yyyy:MM:01 00:00:00&quot;)]" doc:name="Set endDate"/>
-        <http:request config-ref="Mediahaven_Rest_API" path="/media/" method="GET" doc:name="Get all from previous month">
-            <http:request-builder>
-                <http:query-param paramName="q" value="+((MediaObjectArchiveStatus:on_tape OR MediaObjectArchiveStatus:on_disk) AND MediaObjectArchiveDate:[&quot;#[flowVars.startDate]&quot; TO &quot;#[flowVars.endDate]&quot;] AND MediaObjectOwnerName:#[flowVars.organisation] AND (MediaObjectType:video OR MediaObjectType:audio) AND MediaObjectFragmentisiningestspace:*)"/>
-                <http:query-param paramName="nrOfResults" value="1"/>
-                <http:header headerName="Authorization" value="${mediahaven.authstring}"/>
-            </http:request-builder>
-        </http:request>
+        <until-successful maxRetries="50" millisBetweenRetries="5000" synchronous="true" doc:name="Until Successful">
+            <http:request config-ref="Mediahaven_Rest_API" path="/media/" method="GET" doc:name="Get all from previous month">
+                <http:request-builder>
+                    <http:query-param paramName="q" value="+((MediaObjectArchiveStatus:on_tape OR MediaObjectArchiveStatus:on_disk) AND MediaObjectArchiveDate:[&quot;#[flowVars.startDate]&quot; TO &quot;#[flowVars.endDate]&quot;] AND MediaObjectOwnerName:#[flowVars.organisation] AND (MediaObjectType:video OR MediaObjectType:audio OR MediaObjectType:newspaper) AND MediaObjectFragmentisiningestspace:*)"/>
+                    <http:query-param paramName="nrOfResults" value="1"/>
+                    <http:header headerName="Authorization" value="${mediahaven.authstring}"/>
+                </http:request-builder>
+            </http:request>
+        </until-successful>
         <dw:transform-message doc:name="Transform Message">
             <dw:set-payload><![CDATA[%dw 1.0
 %output application/java
@@ -256,13 +271,15 @@ totalUntilLastMonth: payload.totalNrOfResults]]></dw:set-payload>
     <sub-flow name="get_previous_month">
         <set-variable variableName="startDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).plusMonths(-1).format(&quot;yyyy:MM:01 00:00:00&quot;)]" doc:name="Set startDate"/>
         <set-variable variableName="endDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).format(&quot;yyyy:MM:01 00:00:00&quot;)]" doc:name="Set endDate"/>
-        <http:request config-ref="Mediahaven_Rest_API" path="/media/" method="GET" doc:name="Get all from previous month">
-            <http:request-builder>
-                <http:query-param paramName="q" value="+((MediaObjectArchiveStatus:on_tape OR MediaObjectArchiveStatus:on_disk) AND MediaObjectArchiveDate:[&quot;#[flowVars.startDate]&quot; TO &quot;#[flowVars.endDate]&quot;] AND MediaObjectOwnerName:#[flowVars.organisation] AND (MediaObjectType:video OR MediaObjectType:audio) AND MediaObjectFragmentisiningestspace:*)"/>
-                <http:query-param paramName="nrOfResults" value="1"/>
-                <http:header headerName="Authorization" value="${mediahaven.authstring}"/>
-            </http:request-builder>
-        </http:request>
+        <until-successful maxRetries="50" millisBetweenRetries="5000" synchronous="true" doc:name="Until Successful">
+            <http:request config-ref="Mediahaven_Rest_API" path="/media/" method="GET" doc:name="Get all from previous month">
+                <http:request-builder>
+                    <http:query-param paramName="q" value="+((MediaObjectArchiveStatus:on_tape OR MediaObjectArchiveStatus:on_disk) AND MediaObjectArchiveDate:[&quot;#[flowVars.startDate]&quot; TO &quot;#[flowVars.endDate]&quot;] AND MediaObjectOwnerName:#[flowVars.organisation] AND (MediaObjectType:video OR MediaObjectType:audio OR MediaObjectType:newspaper) AND MediaObjectFragmentisiningestspace:*)"/>
+                    <http:query-param paramName="nrOfResults" value="1"/>
+                    <http:header headerName="Authorization" value="${mediahaven.authstring}"/>
+                </http:request-builder>
+            </http:request>
+        </until-successful>
         <dw:transform-message doc:name="Transform Message">
             <dw:set-payload><![CDATA[%dw 1.0
 %output application/java
@@ -273,13 +290,15 @@ previousMonth: payload.totalNrOfResults]]></dw:set-payload>
     <sub-flow name="get_not_published_in_warranty">
         <set-variable variableName="startDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).plusMonths(-6).format(&quot;yyyy:MM:01 00:00:00&quot;)]" doc:name="Set startDate"/>
         <set-variable variableName="endDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).format(&quot;yyyy:MM:01 00:00:00&quot;)]" doc:name="Set endDate"/>
-        <http:request config-ref="Mediahaven_Rest_API" path="/media/" method="GET" doc:name="Get all from previous month">
-            <http:request-builder>
-                <http:query-param paramName="q" value="+((MediaObjectArchiveStatus:on_tape OR MediaObjectArchiveStatus:on_disk) AND MediaObjectArchiveDate:[&quot;#[flowVars.startDate]&quot; TO &quot;#[flowVars.endDate]&quot;] AND MediaObjectOwnerName:#[flowVars.organisation] AND (MediaObjectType:video OR MediaObjectType:audio) AND MediaObjectFragmentisiningestspace:1)"/>
-                <http:query-param paramName="nrOfResults" value="1"/>
-                <http:header headerName="Authorization" value="${mediahaven.authstring}"/>
-            </http:request-builder>
-        </http:request>
+        <until-successful maxRetries="50" millisBetweenRetries="5000" synchronous="true" doc:name="Until Successful">
+            <http:request config-ref="Mediahaven_Rest_API" path="/media/" method="GET" doc:name="Get all from previous month">
+                <http:request-builder>
+                    <http:query-param paramName="q" value="+((MediaObjectArchiveStatus:on_tape OR MediaObjectArchiveStatus:on_disk) AND MediaObjectArchiveDate:[&quot;#[flowVars.startDate]&quot; TO &quot;#[flowVars.endDate]&quot;] AND MediaObjectOwnerName:#[flowVars.organisation] AND (MediaObjectType:video OR MediaObjectType:audio OR MediaObjectType:newspaper) AND MediaObjectFragmentisiningestspace:1)"/>
+                    <http:query-param paramName="nrOfResults" value="1"/>
+                    <http:header headerName="Authorization" value="${mediahaven.authstring}"/>
+                </http:request-builder>
+            </http:request>
+        </until-successful>
         <dw:transform-message doc:name="Transform Message">
             <dw:set-payload><![CDATA[%dw 1.0
 %output application/java
@@ -290,13 +309,15 @@ notPublishedInWarranty: payload.totalNrOfResults]]></dw:set-payload>
    <sub-flow name="get_not_published_about_to_expire">
         <set-variable variableName="startDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).plusMonths(-5).format(&quot;yyyy:MM:01 00:00:00&quot;)]" doc:name="Set startDate"/>
         <set-variable variableName="endDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).plusMonths(-6).format(&quot;yyyy:MM:01 00:00:00&quot;)]" doc:name="Set endDate"/>
-        <http:request config-ref="Mediahaven_Rest_API" path="/media/" method="GET" doc:name="Get all from previous month">
-            <http:request-builder>
-                <http:query-param paramName="q" value="+((MediaObjectArchiveStatus:on_tape OR MediaObjectArchiveStatus:on_disk) AND MediaObjectArchiveDate:[&quot;#[flowVars.startDate]&quot; TO &quot;#[flowVars.endDate]&quot;] AND MediaObjectOwnerName:#[flowVars.organisation] AND (MediaObjectType:video OR MediaObjectType:audio) AND MediaObjectFragmentisiningestspace:1)"/>
-                <http:query-param paramName="nrOfResults" value="1"/>
-                <http:header headerName="Authorization" value="${mediahaven.authstring}"/>
-            </http:request-builder>
-        </http:request>
+        <until-successful maxRetries="50" millisBetweenRetries="5000" synchronous="true" doc:name="Until Successful">
+            <http:request config-ref="Mediahaven_Rest_API" path="/media/" method="GET" doc:name="Get all from previous month">
+                <http:request-builder>
+                    <http:query-param paramName="q" value="+((MediaObjectArchiveStatus:on_tape OR MediaObjectArchiveStatus:on_disk) AND MediaObjectArchiveDate:[&quot;#[flowVars.startDate]&quot; TO &quot;#[flowVars.endDate]&quot;] AND MediaObjectOwnerName:#[flowVars.organisation] AND (MediaObjectType:video OR MediaObjectType:audio OR MediaObjectType:newspaper) AND MediaObjectFragmentisiningestspace:1)"/>
+                    <http:query-param paramName="nrOfResults" value="1"/>
+                    <http:header headerName="Authorization" value="${mediahaven.authstring}"/>
+                </http:request-builder>
+            </http:request>
+        </until-successful>
         <dw:transform-message doc:name="Transform Message">
             <dw:set-payload><![CDATA[%dw 1.0
 %output application/java
@@ -306,12 +327,14 @@ notPublishedAboutToExpire: payload.totalNrOfResults]]></dw:set-payload>
     </sub-flow>
     <sub-flow name="get_total_registered_items">
         <set-variable variableName="endDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).format(&quot;yyyy-MM-01&quot;)]" doc:name="Set endDate"/>
-        <db:select config-ref="MySQL_Configuration" doc:name="Get total registered items in AMS">
-            <db:parameterized-query><![CDATA[SELECT COUNT(*) as total FROM carrier
+        <until-successful maxRetries="50" millisBetweenRetries="5000" doc:name="Until Successful" synchronous="true">
+            <db:select config-ref="MySQL_Configuration" doc:name="Get total registered items in AMS">
+                <db:parameterized-query><![CDATA[SELECT COUNT(*) as total FROM carrier
 LEFT JOIN organizations org ON organization_id = org.id
 WHERE noid_id = #[flowVars.or_id]
 AND created_on < #[flowVars.endDate];]]></db:parameterized-query>
-        </db:select>
+            </db:select>
+        </until-successful>
         <dw:transform-message doc:name="Transform Message">
             <dw:set-payload><![CDATA[%dw 1.0
 %output application/java
@@ -321,12 +344,14 @@ totalRegistered: payload[0].total]]></dw:set-payload>
     </sub-flow>
     <sub-flow name="get_registered_items_until_previous_month">
         <set-variable variableName="endDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).plusMonths(-1).format(&quot;yyyy-MM-01&quot;)]" doc:name="Set endDate"/>
-        <db:select config-ref="MySQL_Configuration" doc:name="Get total registered items during the last month in AMS">
-            <db:parameterized-query><![CDATA[SELECT COUNT(*) as total FROM carrier
+        <until-successful maxRetries="50" millisBetweenRetries="5000" synchronous="true" doc:name="Until Successful">
+            <db:select config-ref="MySQL_Configuration" doc:name="Get total registered items during the last month in AMS">
+                <db:parameterized-query><![CDATA[SELECT COUNT(*) as total FROM carrier
 LEFT JOIN organizations org ON organization_id = org.id
 WHERE noid_id = #[flowVars.or_id]
 AND created_on < #[flowVars.endDate];]]></db:parameterized-query>
-        </db:select>
+            </db:select>
+        </until-successful>
         <dw:transform-message doc:name="Transform Message">
             <dw:set-payload><![CDATA[%dw 1.0
 %output application/java
