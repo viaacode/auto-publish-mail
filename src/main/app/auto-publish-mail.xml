@@ -22,8 +22,7 @@ http://www.mulesoft.org/schema/mule/amqp http://www.mulesoft.org/schema/mule/amq
             <db:select config-ref="MAM_Snapshot" doc:name="Get all organisations">
                 <db:parameterized-query><![CDATA[SELECT DISTINCT(organisation)
 FROM sips
-WHERE organisation NOT IN('failures', 'plantentuinmeise')
-LIMIT 3;]]></db:parameterized-query>
+WHERE organisation NOT IN('failures', 'plantentuinmeise', 'viaa', 'testbeeld');]]></db:parameterized-query>
             </db:select>
         </until-successful>
         <!-- 
@@ -63,7 +62,7 @@ attachment.setTitle(server.dateTime.toString());
 
 flowVars.attachments.add(attachment);]]></expression-component>
             <logger message="Sending a message to Slack!" level="WARN" doc:name="Logger"/>
-            <slack:upload-file-as-input-streams config-ref="Slack__Token_Configuration"     doc:name="Slack" channelID="C5U7J2RLL" fileName="autopublish-#[org.joda.time.format.DateTimeFormat.forPattern(&quot;E d MMMM yyyy&quot;).print(new org.joda.time.DateTime())].log" fileType="text" initialComment="Attached are the logs from the auto publish that ran on #[org.joda.time.format.DateTimeFormat.forPattern(&quot;E d MMMM yyyy&quot;).print(new org.joda.time.DateTime())]" inputStream-ref="#[new ByteArrayInputStream(flowVars.slackStringBuilder.toString().getBytes())]" title="Autopublish logfile #[org.joda.time.format.DateTimeFormat.forPattern(&quot;E d MMMM yyyy&quot;).print(new org.joda.time.DateTime())]"/>
+            <slack:upload-file-as-input-streams config-ref="Slack__Token_Configuration"     doc:name="Slack" channelID="${slack.channelid}" fileName="autopublish-mail-#[org.joda.time.format.DateTimeFormat.forPattern(&quot;E d MMMM yyyy&quot;).print(new org.joda.time.DateTime())].log" fileType="text" initialComment="Attached are the logs from the emailer that ran on #[org.joda.time.format.DateTimeFormat.forPattern(&quot;E d MMMM yyyy&quot;).print(new org.joda.time.DateTime())]" inputStream-ref="#[new ByteArrayInputStream(flowVars.slackStringBuilder.toString().getBytes())]" title="Mailer logfile #[org.joda.time.format.DateTimeFormat.forPattern(&quot;E d MMMM yyyy&quot;).print(new org.joda.time.DateTime())]"/>
         </async>
     </flow>
     <sub-flow name="processOrganisation">
@@ -206,7 +205,7 @@ flowVars.users filter (
 %output application/json
 ---
 {
-    "To": [payload.email],
+    "To": [payload.mail],
     "Data": {
     	"given_name": payload.givenName,
         "currentMonth": flowVars.emailData.currentMonth,
@@ -222,11 +221,11 @@ flowVars.users filter (
     }
 }]]></dw:set-payload>
             </dw:transform-message>
-            <!--
+            
             <until-successful maxRetries="50" millisBetweenRetries="5000" synchronous="true" doc:name="Until Successful">
                 <http:request config-ref="GlueConfiguration" path="/${glue.mailtemplateid}/send" method="POST" doc:name="HTTP"/>
             </until-successful>
-        	-->
+        	
         </foreach>
         <expression-component doc:name="Append string to slackStringBuilder"><![CDATA[flowVars.slackStringBuilder
 	.append("\n\n\n");]]></expression-component>

@@ -22,7 +22,7 @@ http://www.mulesoft.org/schema/mule/slack http://www.mulesoft.org/schema/mule/sl
     <http:request-config name="GlueConfiguration" protocol="HTTPS" host="${glue.host}" port="${glue.port}" basePath="${glue.basepath}" doc:name="HTTP Request Configuration">
         <http:basic-authentication username="${glue.username}" password="${glue.password}" preemptive="true"/>
     </http:request-config>
-    <amqp:connector name="AMQP_0_9_Connector" validateConnections="true" host="${rabbit.host}" port="${rabbit.port}" virtualHost="${rabbit.virtualhost}" username="${rabbit.username}" password="${rabbit.password}" numberOfChannels="1" doc:name="AMQP-0-9 Connector" ackMode="MANUAL"/>
+    <amqp:connector name="AMQP_0_9_Connector" validateConnections="true" host="${rabbit.host}" port="${rabbit.port}" virtualHost="${rabbit.virtualhost}" username="${rabbit.username}" password="${rabbit.password}" numberOfChannels="1" doc:name="AMQP-0-9 Connector" ackMode="MANUAL" prefetchCount="1"/>
     <ldap:config
     	name="LDAP_Configuration"
     	authDn="${ldap.authdn}"
