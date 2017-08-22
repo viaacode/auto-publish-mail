@@ -20,15 +20,15 @@ http://www.mulesoft.org/schema/mule/amqp http://www.mulesoft.org/schema/mule/amq
         <set-variable variableName="slackStringBuilder" value="#[new java.lang.StringBuilder()]" doc:name="Set slackStringBuilder"/>
         <until-successful maxRetries="50" millisBetweenRetries="5000" synchronous="true" doc:name="Until Successful">
             <db:select config-ref="MAM_Snapshot" doc:name="Get all organisations">
-                <db:parameterized-query><![CDATA[SELECT DISTINCT(organisation)
-FROM sips
-WHERE organisation NOT IN('failures', 'plantentuinmeise', 'viaa', 'testbeeld');]]></db:parameterized-query>
+                <db:parameterized-query><![CDATA[SELECT name as organisation
+FROM organisations
+WHERE name NOT IN('failures', 'plantentuinmeise', 'viaa', 'testbeeld');]]></db:parameterized-query>
             </db:select>
         </until-successful>
+        <set-variable variableName="endquery" value="(now() - interval '1' month)" doc:name="Set endquery"/>
         <!-- 
         <set-variable variableName="currentTime" value="#[new org.mule.el.datetime.DateTime(&quot;2017-07-01T00:00:00.000+02:00&quot;)]" doc:name="Mock currentTime"/>
         -->
-        <set-variable variableName="endquery" value="(now() - interval '1' month)" doc:name="Set endquery"/>
         <set-variable variableName="nrOfOrganisations" value="#[payload.size()]" doc:name="Set nrOfOrganisations"/>
         <foreach doc:name="For Each organisation">
             <flow-ref name="processOrganisation" doc:name="processOrganisation"/>
@@ -189,7 +189,7 @@ flowVars.attachments.add(attachment);]]></expression-component>
 %output application/java
 ---
 flowVars.users filter (
-	// Regex originates from http://emailregex.com. Should cover 99.9% of cases
+	 //Regex originates from http://emailregex.com. Should cover 99.9% of cases
 	(not ($.mail contains '@viaa.be')) and 
 	($.mail matches /^(([^<>()\[\]\\.,;:\s@"]+(\.[^<>()\[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/)
 )]]></dw:set-payload>
@@ -221,11 +221,11 @@ flowVars.users filter (
     }
 }]]></dw:set-payload>
             </dw:transform-message>
-            
+             
             <until-successful maxRetries="50" millisBetweenRetries="5000" synchronous="true" doc:name="Until Successful">
                 <http:request config-ref="GlueConfiguration" path="/${glue.mailtemplateid}/send" method="POST" doc:name="HTTP"/>
             </until-successful>
-        	
+        
         </foreach>
         <expression-component doc:name="Append string to slackStringBuilder"><![CDATA[flowVars.slackStringBuilder
 	.append("\n\n\n");]]></expression-component>
