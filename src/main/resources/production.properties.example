@@ -18,13 +18,6 @@ glue.host=api.createsend.com
 glue.port=443
 glue.basepath=/api/v3.1/transactional/smartemail
 
-mamsnapshot.host=
-mamsnapshot.port=
-mamsnapshot.database=
-mamsnapshot.username=
-mamsnapshot.password=
-mamsnapshot.url=jdbc:postgresql://${mamsnapshot.host}:${mamsnapshot.port}/${mamsnapshot.database}?password=${mamsnapshot.password}&user=${mamsnapshot.username}
-
 ldap.authdn=
 ldap.authpassword=
 ldap.url=
