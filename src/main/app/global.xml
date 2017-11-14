@@ -17,7 +17,6 @@ http://www.mulesoft.org/schema/mule/slack http://www.mulesoft.org/schema/mule/sl
  	<context:property-placeholder location="${mule.env}.properties"/>
  	
  	<http:request-config name="Mediahaven_Rest_API" host="${mediahaven.host}" port="${mediahaven.port}" basePath="${mediahaven.basepath}" doc:name="HTTP Request Configuration" protocol="HTTPS"/>
- 	<db:generic-config name="MAM_Snapshot" url="${mamsnapshot.url}" driverClassName="org.postgresql.Driver" doc:name="Generic Database Configuration"/>
  	<db:mysql-config name="MySQL_Configuration" host="${ams.host}" port="3306" user="${ams.username}" password="${ams.password}" database="${ams.database}" doc:name="MySQL Configuration"/>
     <http:request-config name="GlueConfiguration" protocol="HTTPS" host="${glue.host}" port="${glue.port}" basePath="${glue.basepath}" doc:name="HTTP Request Configuration">
         <http:basic-authentication username="${glue.username}" password="${glue.password}" preemptive="true"/>
