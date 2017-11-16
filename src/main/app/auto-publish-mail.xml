@@ -246,9 +246,9 @@ flowVars.users filter (
 }]]></dw:set-payload>
             </dw:transform-message>
              
-<!--             <until-successful maxRetries="50" millisBetweenRetries="5000" synchronous="true" doc:name="Until Successful"> -->
-<!--                 <http:request config-ref="GlueConfiguration" path="/${glue.mailtemplateid}/send" method="POST" doc:name="Send the email"/> -->
-<!--             </until-successful> -->
+            <until-successful maxRetries="50" millisBetweenRetries="5000" synchronous="true" doc:name="Until Successful">
+                <http:request config-ref="GlueConfiguration" path="/${glue.mailtemplateid}/send" method="POST" doc:name="Send the email"/>
+            </until-successful>
         
         </foreach>
         <expression-component doc:name="Append string to slackStringBuilder"><![CDATA[flowVars.slackStringBuilder

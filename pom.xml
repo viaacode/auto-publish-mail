@@ -48,6 +48,14 @@
                             <groupId>org.mule.transports</groupId>
                             <artifactId>mule-transport-amqp</artifactId>
                         </inclusion>
+                    <inclusion>
+                            <groupId>org.mule.modules</groupId>
+                            <artifactId>mule-module-extensions-support</artifactId>
+                        </inclusion>
+                    <inclusion>
+                            <groupId>org.mule.modules</groupId>
+                            <artifactId>mule-module-extensions-spring-support</artifactId>
+                        </inclusion>
                     </inclusions>
                 </configuration>
 			</plugin>
