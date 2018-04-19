@@ -198,7 +198,7 @@ payload filter (
     </sub-flow>
     <sub-flow name="getUsersFromLdapByOrganisationSubFlow">
         <until-successful maxRetries="50" millisBetweenRetries="5000" doc:name="Until Successful" synchronous="true">
-            <ldap:search config-ref="LDAP_Configuration" baseDn="ou=apps,ou=users,dc=prd,dc=viaa,dc=be" filter="(&amp;(objectclass=inetOrgPerson)(o=#[flowVars.or_id]))" scope="SUB_TREE" structuralObjectClass="inetOrgPerson" doc:name="Get users by organisation">
+            <ldap:search config-ref="LDAP_Configuration" baseDn="ou=apps,ou=users,dc=prd,dc=viaa,dc=be" filter="(&amp;(objectclass=inetOrgPerson)(o=#[flowVars.or_id])(memberOf=cn=mediahaven,ou=apps,ou=groups,dc=prd,dc=viaa,dc=be))" scope="SUB_TREE" structuralObjectClass="inetOrgPerson" doc:name="Get users by organisation">
                 <ldap:attributes>
                     <ldap:attribute>mail</ldap:attribute>
                     <ldap:attribute>givenName</ldap:attribute>
