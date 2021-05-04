@@ -331,8 +331,8 @@ notPublishedInWarranty: payload.totalNrOfResults]]></dw:set-payload>
         </dw:transform-message>
     </sub-flow>
    <sub-flow name="get_not_published_about_to_expire">
-        <set-variable variableName="startDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).plusMonths(-5).format(&quot;yyyy:MM:01 00:00:00&quot;)]" doc:name="Set startDate"/>
-        <set-variable variableName="endDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).plusMonths(-6).format(&quot;yyyy:MM:01 00:00:00&quot;)]" doc:name="Set endDate"/>
+        <set-variable variableName="startDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).plusMonths(-6).format(&quot;yyyy:MM:01 00:00:00&quot;)]" doc:name="Set startDate"/>
+        <set-variable variableName="endDate" value="#[new org.mule.el.datetime.DateTime(flowVars.currentTime).plusMonths(-5).format(&quot;yyyy:MM:01 00:00:00&quot;)]" doc:name="Set endDate"/>
         <until-successful maxRetries="50" millisBetweenRetries="5000" synchronous="true" doc:name="Until Successful">
             <http:request config-ref="Mediahaven_Rest_API" path="/media/" method="GET" doc:name="Get total from 6 months ago until 5 months ago">
                 <http:request-builder>
